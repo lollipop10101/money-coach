@@ -252,11 +252,12 @@ async function hourlyScan(pools) {
     const stratWeight = weights[strat.name] || 1;
 
     const netSpread = (collPool.supplyApy - debtPool.borrowApy).toFixed(1);
-    const organicSpread = (collPool.organicSupplyApy - debtPool.organicBorrowApy).toFixed(1);
-    const incentiveApr = (collPool.incentivizedSupplyApr + debtPool.incentivizedSupplyApr) || 0;
+    const organicSpread = collPool.supplyApy - debtPool.borrowApy;
+    const organicPct = organicSpread.toFixed(1);
+    const incentiveApr = collPool.incentivizedSupplyApr || 0;
     lines.push(`${emoji} ${strat.name} (${strat.lev}x) w${stratWeight.toFixed(1)}`);
     lines.push(`   Net Spread: +${netSpread}% (Incentives included)`);
-    lines.push(`   ├─ Organic: +${organicSpread}%`);
+    lines.push(`   ├─ Organic: +${organicPct}%`);
     if (incentiveApr > 0) {
       lines.push(`   └─ Incentives: +${incentiveApr.toFixed(2)}% ⚠️`);
     } else {
