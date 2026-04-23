@@ -45,17 +45,17 @@ async function getPools() {
     totalSupply: parseFloat(p.totalSupply || 0) / 1e9,
     // Phase 2: separated organic / incentivized
     organicSupplyApy: (() => {
-      const total = parseFloat(p.supplyIncentiveApyInfo?.apy || p.supplyApy || 0);
-      const boosted = parseFloat(p.supplyIncentiveApyInfo?.boostedApr || 0);
-      const vault   = parseFloat(p.supplyIncentiveApyInfo?.vaultApr || 0);
-      const volo    = parseFloat(p.supplyIncentiveApyInfo?.voloApy || 0);
-      return total - boosted - vault - volo;
+      // Real organic yield: treasuryApy (real yield from reserves) + stakingYieldApy
+      const treasury = parseFloat(p.supplyIncentiveApyInfo?.treasuryApy || 0);
+      const staking  = parseFloat(p.supplyIncentiveApyInfo?.stakingYieldApy || 0);
+      return treasury + staking;
     })(),
     incentivizedSupplyApr: (() => {
-      const boosted = parseFloat(p.supplyIncentiveApyInfo?.boostedApr || 0);
-      const vault   = parseFloat(p.supplyIncentiveApyInfo?.vaultApr || 0);
-      const volo    = parseFloat(p.supplyIncentiveApyInfo?.voloApy || 0);
-      return boosted + vault + volo;
+      // Incentivized = total supply minus real organic (only boosted/vault/volo are truly incentivized)
+      const total = parseFloat(p.supplyIncentiveApyInfo?.apy || 0);
+      const treasury = parseFloat(p.supplyIncentiveApyInfo?.treasuryApy || 0);
+      const staking  = parseFloat(p.supplyIncentiveApyInfo?.stakingYieldApy || 0);
+      return Math.max(0, total - treasury - staking);
     })(),
     boostedSupplyApr: parseFloat(p.supplyIncentiveApyInfo?.boostedApr || 0),
     vaultSupplyApr: parseFloat(p.supplyIncentiveApyInfo?.vaultApr || 0),
@@ -252,12 +252,12 @@ async function hourlyScan(pools) {
     const stratWeight = weights[strat.name] || 1;
 
     const netSpread = (collPool.supplyApy - debtPool.borrowApy).toFixed(1);
-    const organicSpread = collPool.supplyApy - debtPool.borrowApy;
-    const organicPct = organicSpread.toFixed(1);
+    const organicSpread = collPool.organicSupplyApy - debtPool.organicBorrowApy;
+    const organicPct = organicSpread >= 0 ? `${organicSpread.toFixed(1)}%` : `${organicSpread.toFixed(1)}%`;
     const incentiveApr = collPool.incentivizedSupplyApr || 0;
     lines.push(`${emoji} ${strat.name} (${strat.lev}x) w${stratWeight.toFixed(1)}`);
     lines.push(`   Net Spread: +${netSpread}% (Incentives included)`);
-    lines.push(`   ├─ Organic: +${organicPct}%`);
+    lines.push(`   ├─ Organic: ${organicPct}`);
     if (incentiveApr > 0) {
       lines.push(`   └─ Incentives: +${incentiveApr.toFixed(2)}% ⚠️`);
     } else {
