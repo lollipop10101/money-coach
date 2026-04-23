@@ -251,11 +251,12 @@ async function hourlyScan(pools) {
     const emoji = spread > 2 ? "✅" : spread > 0 ? "⚠️" : "❌";
     const stratWeight = weights[strat.name] || 1;
 
-    const netSpread = (collPool.grossSpread || spread).toFixed(1);
+    const netSpread = (collPool.supplyApy - debtPool.borrowApy).toFixed(1);
+    const organicSpread = (collPool.organicSupplyApy - debtPool.organicBorrowApy).toFixed(1);
+    const incentiveApr = (collPool.incentivizedSupplyApr + debtPool.incentivizedSupplyApr) || 0;
     lines.push(`${emoji} ${strat.name} (${strat.lev}x) w${stratWeight.toFixed(1)}`);
     lines.push(`   Net Spread: +${netSpread}% (Incentives included)`);
-    lines.push(`   ├─ Organic: +${(collPool.organicSpread || 0).toFixed(1)}%`);
-    const incentiveApr = collPool.incentivizedSupplyApr || 0;
+    lines.push(`   ├─ Organic: +${organicSpread}%`);
     if (incentiveApr > 0) {
       lines.push(`   └─ Incentives: +${incentiveApr.toFixed(2)}% ⚠️`);
     } else {
