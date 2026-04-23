@@ -1,0 +1,153 @@
+# Money Coach — Technical Specification
+*Version 1.1 | April 2026*
+
+---
+
+## Overview
+
+Money Coach is an automated DeFi lending opportunity tracker for the SUI ecosystem. It monitors NAVI protocol lending pools, calculates carry trade spreads, and sends Telegram alerts when profitable opportunities are detected.
+
+**Core philosophy:** From "Static Spread" to "Dynamic Strategy" — treating the bot as a partner, not just a calculator.
+
+---
+
+## Architecture
+
+```
+NAVI API → alert.mjs → Telegram → Mark
+              ↓
+         predictor.js (BTC/SUI regime)
+              ↓
+         strategies.mjs (carry trade definitions)
+```
+
+---
+
+## Core Calculations
+
+### 30D Real Yield Formula (Target)
+
+$$Yield_{30d} = [ P \cdot (1 + r_s)^{30} + \sum Rewards_{navx} ] - [ D \cdot (1 + r_b)^{30} + (D \cdot \Delta Price_{debt}) ]$$
+
+Where:
+- $r_s / r_b$: Daily periodic organic rates
+- $Rewards_{navx}$: Non-compounding incentives (daily, at current NAVX price)
+- $\Delta Price_{debt}$: Price change of borrowed asset (critical for haSUI strategies)
+
+**Note:** Current implementation uses a combined APY figure. Phase 2 separates organic vs incentivized.
+
+### Current calc30d (v1.0 — combined APY)
+
+```javascript
+function calc30d(supplyApy, borrowApy, ltv, debtPriceChange = 0, lev = 1) {
+  const t = 30 / 365;
+  const collateralFinal = 100 * lev * Math.exp(supplyApy / 100 * t);
+  const debtPrincipal = 100 * lev * ltv;
+  const debtValue = debtPrincipal * (1 + debtPriceChange);
+  const borrowCost = debtPrincipal * (Math.exp(borrowApy / 100 * t) - 1);
+  const net = collateralFinal - debtValue - borrowCost;
+  return ((net / (100 * lev)) * 100).toFixed(1);
+}
+```
+
+### Reward Haircut (Phase 2)
+NAVX rewards are often sold immediately by farmers. Apply 80% factor to incentivized APY:
+```
+effectiveRewardApy = rewardApy * 0.80
+```
+
+---
+
+## Phase 2 Feature Roadmap
+
+| Feature | Implementation | Priority |
+|:---|:---|:---|
+| Organic vs Incentivized APY | Split supplyBaseApy from rewardApy via NAVI Indexer | **HIGH** |
+| NAVX Price Tracking | Fetch NAVX price from BlueMove/Cetus DEX | **HIGH** |
+| Slippage-Adjusted Reward | Apply 2% NAVX sell pressure factor | **HIGH** |
+| LST Depeg Monitor | Track haSUI/SUI price ratio; flag if < 0.99 | **HIGH** |
+| Liquidation Buffer | $Price_{Liq} = \frac{Debt}{Collateral \times LTV_{limit}}$ | **MEDIUM** |
+| 7D Spread Stability | StdDev of spread over trailing 7 days | **MEDIUM** |
+| ETF Intraday Filter | Flag borrow spikes at 14:30 UTC (NYSE open) | **MEDIUM** |
+| Breakeven TVL | Sum of 4 txs / Net Spread | **LOW** |
+| Gas-Adjusted Yield | Include SUI gas costs in 30D projection | **LOW** |
+
+---
+
+## Phase 3: Regime-Based Actionables
+
+| Regime | Advice | Reasoning |
+|:---|:---|:---|
+| **BULL 🐂** | "Avoid borrowing SUI/LSTs. Focus on Stable-to-Stable (USDY/USDC) carry trades." | SUI borrow rates spike; debt balloons with price |
+| **BEAR 🐻** | "High Efficiency. Borrowing haSUI subsidized by price decline. Safe to scale to 2.5x." | Price decline offsets borrow cost |
+| **SIDEWAYS 📊** | "Incentive Harvest. Focus on highest NAVX/SUI reward pools. Keep liquidation stops tight." | Harvest incentives; avoid leverage |
+
+---
+
+## Alert Format (Target)
+
+```
+🔍 NAVI Scan | Regime: BULL 🐂
+
+✅ USDC → haSUI (2x)
+   Net Spread: +3.1% ( Incentives included )
+   ├─ Organic: 2.1%
+   └─ NAVX Incentives: 2.55% ⚠️ (NAVX: $X.XX, -X% this week)
+   
+⚠️ LIQUIDATION RISK
+   LTV: 75% | Buffer: +52% (SUI must rise 52% to trigger)
+
+💎 haSUI at 0.2% discount (Bonus entry yield!)
+
+📊 Stability: HIGH (Spread stable for 12h)
+   7D Spread Avg: +4.2% | StdDev: 0.3%
+
+💡 Regime Advice: "Avoid SUI borrows. Focus on Stable-to-Stable."
+```
+
+---
+
+## Monitored Strategies
+
+| Strategy | Collateral | Debt | Leverage | Debt Asset? |
+|:---|:---|:---|:---|:---|
+| USDY→USDC | USDY | USDC | 1x | No |
+| USDC→USDC | USDC | USDC | 1x | No |
+| USDC→haSUI | USDC | haSUI | 2x | Yes |
+| USDC→LBTC | USDC | LBTC | 2x | Yes |
+
+---
+
+## Known Limitations (v1.1)
+
+1. calc30d is a forward projection — rates assumed constant for 30 days
+2. Organic vs incentivized APY **NOT** separated — NAVX price risk untracked
+3. NAVX slippage-adjusted reward **NOT** calculated
+4. LST depeg (haSUI/SUI ratio) **NOT** tracked
+5. Liquidation buffer **NOT** calculated
+6. No 7D spread stability history
+7. No ETF intraday spike detection (14:30 UTC borrow spikes)
+8. Gas costs **NOT** included in 30D projection
+
+---
+
+## Files
+
+| File | Purpose |
+|:---|:---|
+| alert.mjs | Main loop: hourly + 12h full scan, Telegram alerts |
+| predictor.js | BTC/SUI regime classification via Ollama |
+| strategies.mjs | Strategy definitions + backtester |
+| tracker.js | NAVI API fetcher |
+| docs/UPGRADE-v1.1.md | Mark's full upgrade specification |
+
+---
+
+## Status
+
+- alert.mjs: Running (PID in alert.pid)
+- predictor.js: Active
+- Watchdog cron: * * * * *
+- Regime: See last alert log
+
+*Optimizing — Generated by Money Coach Strategy Engine*
