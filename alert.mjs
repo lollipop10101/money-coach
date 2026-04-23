@@ -340,23 +340,23 @@ async function fullScan(pools) {
   const time = new Date().toLocaleString();
   const allPairs = findCarryPairs(pools);
   const top5 = allPairs.slice(0, 5);
-  const top3 = allPairs.slice(0, 3); // Auto-pair discovery
 
   const lines = [];
   lines.push(`📊 *Full NAVI APY Scan*\n_${time}_`);
   lines.push(`_Scanning ${pools.length} pools_\n`);
 
-  // Auto-pair discovery: show top 3 pairs not in STRATEGIES
+  // ── B3: NEW OPPORTUNITIES — pools with spread > 2% not in watched list ───
   const monitoredPairs = new Set(STRATEGIES.map(s => `${s.coll}→${s.debt}`));
-  const newPairs = top3.filter(p => !monitoredPairs.has(`${p.coll}→${p.debt}`));
-  if (newPairs.length > 0) {
-    lines.push("*🔎 Auto-Discovered Pairs (not in monitoring):*");
-    for (const p of newPairs) {
+  const newOpportunities = allPairs
+    .filter(p => p.spread > 2 && !monitoredPairs.has(`${p.coll}→${p.debt}`))
+    .slice(0, 3);
+  if (newOpportunities.length > 0) {
+    lines.push("*🔍 NEW OPPORTUNITIES:*");
+    for (const p of newOpportunities) {
       const bull = parseFloat(calc30d(p.collApy, p.debtApy, p.ltv, 0.30));
       const bear = parseFloat(calc30d(p.collApy, p.debtApy, p.ltv, -0.30));
       const side = parseFloat(calc30d(p.collApy, p.debtApy, p.ltv, 0.02));
-      const emoji = p.spread > 2 ? "✅" : p.spread > 0 ? "⚠️" : "❌";
-      lines.push(`${emoji} *${p.coll} → ${p.debt}*  Spread: +${p.spread.toFixed(1)}%`);
+      lines.push(`✅ ${p.coll} → ${p.debt}  Spread: +${p.spread.toFixed(1)}%`);
       lines.push(`   30D: 🐂 ${bull > 0 ? "+" : ""}${bull}% | 🐻 ${bear > 0 ? "+" : ""}${bear}% | 📊 ${side > 0 ? "+" : ""}${side}%`);
     }
     lines.push("");

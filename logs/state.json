@@ -1,9 +1,9 @@
 {
-  "lastAlert": "2026-04-23T10:44:01.761Z",
-  "lastFullScan": "2026-04-23T04:13:55.781Z",
+  "lastAlert": "2026-04-23T12:04:25.583Z",
+  "lastFullScan": "2026-04-23T10:51:08.163Z",
   "previousRates": {
     "USDSUI": {
-      "supplyApy": 6.758,
+      "supplyApy": 6.799,
       "borrowApy": 3.542
     },
     "suiUSDe": {
@@ -15,7 +15,7 @@
       "borrowApy": 0.472
     },
     "XAUm": {
-      "supplyApy": 4.943,
+      "supplyApy": 4.938,
       "borrowApy": 8.032
     },
     "YBTC.B": {
@@ -35,7 +35,7 @@
       "borrowApy": 26.84
     },
     "xBTC": {
-      "supplyApy": 1.4,
+      "supplyApy": 1.402,
       "borrowApy": 0.495
     },
     "HAEDAL": {
@@ -43,11 +43,11 @@
       "borrowApy": 31.333
     },
     "WAL": {
-      "supplyApy": 16.951,
-      "borrowApy": 13.508
+      "supplyApy": 16.953,
+      "borrowApy": 13.509
     },
     "LBTC": {
-      "supplyApy": 1.791,
+      "supplyApy": 1.796,
       "borrowApy": 0.287
     },
     "SOL": {
@@ -63,8 +63,8 @@
       "borrowApy": 1.798
     },
     "suiUSDT": {
-      "supplyApy": 4.08,
-      "borrowApy": 3.814
+      "supplyApy": 4.083,
+      "borrowApy": 3.804
     },
     "BUCK": {
       "supplyApy": 0.122,
@@ -87,20 +87,20 @@
       "borrowApy": 0.255
     },
     "NS": {
-      "supplyApy": 18.659,
+      "supplyApy": 18.681,
       "borrowApy": 11
     },
     "USDY": {
-      "supplyApy": 6.534,
+      "supplyApy": 6.551,
       "borrowApy": 4.095
     },
     "suiETH": {
-      "supplyApy": 0.711,
+      "supplyApy": 0.71,
       "borrowApy": 0.984
     },
     "USDC": {
-      "supplyApy": 3.961,
-      "borrowApy": 3.577
+      "supplyApy": 3.965,
+      "borrowApy": 3.566
     },
     "AUSD": {
       "supplyApy": 0.467,
@@ -116,11 +116,11 @@
     },
     "vSUI": {
       "supplyApy": 2.705,
-      "borrowApy": 0.396
+      "borrowApy": 0.394
     },
     "CETUS": {
-      "supplyApy": 0.888,
-      "borrowApy": 7.126
+      "supplyApy": 0.889,
+      "borrowApy": 7.128
     },
     "WETH": {
       "supplyApy": 0.001,
@@ -135,8 +135,8 @@
       "borrowApy": 29.391
     },
     "SUI": {
-      "supplyApy": 2.714,
-      "borrowApy": 1.838
+      "supplyApy": 2.72,
+      "borrowApy": 1.839
     }
   }
 }

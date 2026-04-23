@@ -1,99 +1,86 @@
 /**
  * price-service.js
- * Fetches NAVX and haSUI prices for slippage-adjusted reward calculation.
+ * Fetches NAVX, haSUI, and SUI prices for slippage-adjusted reward calculation.
+ * Uses: CoinGecko (primary), Binance (SUI fallback)
  */
 
-const COINGECKO_API = 'https://api.coingecko.net/api/v3';
+import { spawn } from 'node:child_process';
 
-// NAVX coin ID on CoinGecko (to be confirmed — may need search)
-const COINGECKO_IDS = {
-  NAVX: 'navi',                 // confirmed: https://www.coingecko.com/en/coins/navi
-  haSUI: 'haedal-staked-sui',   // confirmed via CoinGecko search API
-  SUI: 'sui'
-};
-
+const CACHE_TTL_MS = 60_000;
 let priceCache = { navx: null, hasui: null, sui: null, navxChange24h: null };
 let priceCacheTime = 0;
-const CACHE_TTL_MS = 60_000; // 1 minute
 
-/**
- * Fetch NAVX price in USDC.
- * @returns {Promise<{price: number|null, change24h: number|null}>}
- */
-export async function getNAVXPrice() {
+function curl(url) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('/usr/bin/curl', ['-s', url]);
+    let stdout = '', stderr = '';
+    child.stdout.on('data', d => stdout += d);
+    child.stderr.on('data', d => stderr += d);
+    child.on('close', (code) => {
+      if (code !== 0) { reject(new Error(stderr || `curl exit ${code}`)); return; }
+      try { resolve(JSON.parse(stdout)); }
+      catch { reject(new Error('Invalid JSON')); }
+    });
+    child.on('error', reject);
+  });
+}
+
+async function getNAVXPrice() {
   if (Date.now() - priceCacheTime < CACHE_TTL_MS && priceCache.navx) {
     return { price: priceCache.navx, change24h: priceCache.navxChange24h };
   }
   try {
-    const data = await fetch(`${COINGECKO_API}/simple/price?ids=${COINGECKO_IDS.NAVX}&vs_currencies=usd&include_24hr_change=true`)
-      .then(r => r.json());
-    priceCache.navx = data[COINGECKO_IDS.NAVX]?.usd || null;
-    priceCache.navxChange24h = data[COINGECKO_IDS.NAVX]?.usd_24h_change || null;
+    const cg = await curl('https://api.coingecko.com/api/v3/simple/price?ids=navi&vs_currencies=usd&include_24hr_change=true');
+    const price = cg?.navi?.usd || null;
+    const change24h = cg?.navi?.usd_24h_change || null;
+    priceCache.navx = price;
+    priceCache.navxChange24h = change24h;
     priceCacheTime = Date.now();
-    return { price: priceCache.navx, change24h: priceCache.navxChange24h };
+    return { price, change24h };
   } catch (e) {
-    console.error('[price-service] NAVX fetch failed:', e.message);
-    return { price: priceCache.navx || null, change24h: priceCache.navxChange24h || null };
+    console.error('[price-service] CoinGecko NAVX failed:', e.message);
+    return { price: priceCache.navx, change24h: priceCache.navxChange24h };
   }
 }
 
-/**
- * Fetch haSUI price in USDC.
- * @returns {Promise<number|null>}
- */
-export async function gethaSUIPrice() {
+async function gethaSUIPrice() {
   if (Date.now() - priceCacheTime < CACHE_TTL_MS && priceCache.hasui) {
     return priceCache.hasui;
   }
   try {
-    // First try CoinGecko
-    const data = await fetch(`${COINGECKO_API}/simple/price?ids=${COINGECKO_IDS.haSUI}&vs_currencies=usd&include_24hr_change=true`)
-      .then(r => r.json());
-    if (data[COINGECKO_IDS.haSUI]?.usd) {
-      priceCache.hasui = data[COINGECKO_IDS.haSUI].usd;
+    const cg = await curl('https://api.coingecko.com/api/v3/simple/price?ids=haedal-staked-sui&vs_currencies=usd&include_24hr_change=true');
+    if (cg?.['haedal-staked-sui']?.usd) {
+      priceCache.hasui = cg['haedal-staked-sui'].usd;
       priceCacheTime = Date.now();
       return priceCache.hasui;
     }
   } catch (e) {
-    console.log('[price-service] CoinGecko haSUI failed, trying fallback...');
+    console.log('[price-service] CoinGecko haSUI failed, proxying from SUI');
   }
+  return getSUIPrice();
+}
 
-  // Fallback: approximate with SUI price (haSUI tracks SUI 1:1)
+async function getSUIPrice() {
+  if (Date.now() - priceCacheTime < CACHE_TTL_MS && priceCache.sui) {
+    return priceCache.sui;
+  }
   try {
-    const suiPrice = await getSUIPrice();
-    return suiPrice; // placeholder until BlueMove API confirmed
+    const data = await curl('https://api.binance.com/api/v3/ticker/price?symbol=SUIUSDT');
+    const price = parseFloat(data?.price) || null;
+    priceCache.sui = price;
+    priceCacheTime = Date.now();
+    return price;
   } catch (e) {
-    return null;
+    console.error('[price-service] SUI Binance failed:', e.message);
+    return priceCache.sui || 0;
   }
 }
 
-/**
- * Fetch SUI price in USDC.
- * @returns {Promise<number>}
- */
-export async function getSUIPrice() {
-  try {
-    const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=SUIUSDT`).then(r => r.json());
-    return parseFloat(res.price);
-  } catch (e) {
-    // Fallback to CoinGecko
-    const data = await fetch(`${COINGECKO_API}/simple/price?ids=${COINGECKO_IDS.SUI}&vs_currencies=usd`)
-      .then(r => r.json());
-    return data[COINGECKO_IDS.SUI]?.usd || 0;
-  }
-}
-
-/**
- * Get LST depeg status (haSUI vs SUI).
- * @returns {Promise<{ratio: number, status: 'premium'|'par'|'discount', premium_bps: number}>}
- */
-export async function getLSTDepegStatus() {
+async function getLSTDepegStatus() {
   const [hasuiPrice, suiPrice] = await Promise.all([gethaSUIPrice(), getSUIPrice()]);
   if (!hasuiPrice || !suiPrice) return { ratio: 1, status: 'unknown', premium_bps: 0 };
-
   const ratio = hasuiPrice / suiPrice;
   const premiumBps = (ratio - 1) * 10000;
-
   return {
     ratio,
     status: ratio > 1.001 ? 'premium' : ratio < 0.999 ? 'discount' : 'par',
@@ -101,17 +88,17 @@ export async function getLSTDepegStatus() {
   };
 }
 
-/**
- * NAVX slippage-adjusted reward calculation.
- * Applies conservative 2% sell pressure factor.
- * @param {number} weeklyRewardPerDollar - NAVX rewards earned per USDC supplied per week
- * @returns {Promise<number|null>}
- */
-export async function getNAVXSlippageAdjustedReward(weeklyRewardPerDollar) {
+async function getNAVXSlippageAdjustedReward(weeklyRewardPerDollar) {
   const navxData = await getNAVXPrice();
   if (!navxData.price) return null;
-
-  const SLIPPAGE_FACTOR = 0.98; // 2% sell pressure
-  const grossAnnual = weeklyRewardPerDollar * 52 * navxData.price;
-  return grossAnnual * SLIPPAGE_FACTOR;
+  const SLIPPAGE_FACTOR = 0.98;
+  return weeklyRewardPerDollar * 52 * navxData.price * SLIPPAGE_FACTOR;
 }
+
+export {
+  getNAVXPrice,
+  gethaSUIPrice,
+  getSUIPrice,
+  getLSTDepegStatus,
+  getNAVXSlippageAdjustedReward
+};
