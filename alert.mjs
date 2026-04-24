@@ -6,7 +6,12 @@
  */
 
 import axios from "axios";
-import { readFileSync, writeFileSync, appendFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from "fs";
+import 'dotenv/config';
+
+// Ensure required directories exist
+mkdirSync('logs', { recursive: true });
+mkdirSync('reports', { recursive: true });
 import { getMarketPrediction } from './predictor.js';
 import { getNAVXPrice, getLSTDepegStatus } from './price-service.js';
 
@@ -23,9 +28,11 @@ const REGIME_ADVICE = {
   SIDEWAYS: "Incentive harvest. Focus on highest NAVX/SUI reward pools. Tighten stops."
 };
 
-// Telegram
-const TELEGRAM_BOT_TOKEN = "7203668783:AAFUUXWvMEExKeYGWgQOfCblesFn_it2S-k";
-const TELEGRAM_CHAT_ID = "387074917";
+// Telegram - load from environment
+const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID } = process.env;
+if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+  throw new Error("Missing Telegram config: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env");
+}
 
 // ─── Load state ────────────────────────────────────────────────────────────────
 let state = { lastAlert: null, lastFullScan: null, previousRates: {} };

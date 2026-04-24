@@ -10,6 +10,7 @@ data/
 # Environment
 .env
 .env.local
+.env.example
 
 # Node
 node_modules/
