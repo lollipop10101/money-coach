@@ -16,6 +16,7 @@
     "@mysten/sui": "^1.45.2",
     "@naviprotocol/lending": "^1.4.3",
     "axios": "^1.7.0",
+    "better-sqlite3": "^11.10.0",
     "dotenv": "^16.6.1",
     "node-cache": "^5.1.2"
   }

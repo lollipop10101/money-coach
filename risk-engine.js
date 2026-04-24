@@ -105,6 +105,48 @@ export function checkStrategyRisk(collateralLTV, debtPrice, collateralPrice, lev
 }
 
 /**
+ * getPositionSize — auto-calculate recommended deployment size
+ * @param {string} strategyName
+ * @param {object} pool - pool data
+ * @param {object} walletPosition - optional live wallet position
+ * @returns {{ sizePct: number, minPct: number, maxPct: number, maxDeploy: number, recommendation: string, riskTier: string }}
+ */
+export function getPositionSize(strategyName, pool, walletPosition = null) {
+  const riskTier = checkStrategyRisk(pool.ltv, pool.debtPrice || 0, 1, pool.lev || 1);
+
+  // Base sizing by risk tier
+  const sizingByTier = {
+    'SAFE':    { min: 20, max: 30, label: 'Low risk — deploy 20-30% of capital' },
+    'MODERATE': { min: 10, max: 15, label: 'Medium risk — deploy 10-15% of capital' },
+    'RISKY':   { min: 0,  max: 5,  label: 'High risk — deploy 0-5% of capital' },
+  };
+
+  // Hard block: never deploy if HF < 1.8
+  if (walletPosition && walletPosition.overview?.hf < 1.8) {
+    return {
+      sizePct: 0,
+      minPct: 0,
+      maxPct: 0,
+      maxDeploy: 0,
+      recommendation: 'BLOCKED — Health Factor below 1.8 minimum',
+      reason: `Current HF ${walletPosition.overview.hf.toFixed(2)} < 1.8 safety threshold`,
+      riskTier: riskTier.tier,
+    };
+  }
+
+  const tier = sizingByTier[riskTier.tier] || sizingByTier['RISKY'];
+
+  return {
+    sizePct: (tier.min + tier.max) / 2,
+    minPct: tier.min,
+    maxPct: tier.max,
+    maxDeploy: 0, // caller calculates from capital
+    recommendation: tier.label,
+    riskTier: riskTier.tier,
+  };
+}
+
+/**
  * Build risk summary for a strategy
  */
 export async function buildRiskSummary(strategy, walletAddress) {

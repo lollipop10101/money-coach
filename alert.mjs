@@ -16,6 +16,8 @@ import { getMarketPrediction } from './predictor.js';
 import { getNAVXPrice, getLSTDepegStatus } from './price-service.js';
 import { calcLiqBuffer, getHFTier, getPortfolioAction, checkStrategyRisk, getWalletPosition } from './risk-engine.js';
 import { rankStrategies, getCoachRecommendation } from './score-engine.js';
+import { recordRates, get7dAvg } from './db.js';
+import { checkExitConditions } from './alert-exits.js';
 
 const API = "https://open-api.naviprotocol.io/api/navi/pools?env=prod&sdk=1.4.3&market=main";
 const LOG_FILE = "logs/alerts.log";
@@ -71,6 +73,11 @@ async function getPools() {
     totalSupplyApy: parseFloat(p.supplyIncentiveApyInfo?.apy || p.supplyApy || 0),
     organicBorrowApy: parseFloat(p.borrowIncentiveApyInfo?.underlyingApy || p.borrowApy || 0),
     totalBorrowApy: parseFloat(p.borrowIncentiveApyInfo?.apy || p.borrowApy || 0),
+    netSpread: (() => {
+      const total  = parseFloat(p.supplyIncentiveApyInfo?.apy || p.supplyApy || 0);
+      const totalB = parseFloat(p.borrowIncentiveApyInfo?.apy || p.borrowApy || 0);
+      return total - totalB;
+    })(),
     organicSpread: (() => {
       const total = parseFloat(p.supplyIncentiveApyInfo?.apy || p.supplyApy || 0);
       const boosted = parseFloat(p.supplyIncentiveApyInfo?.boostedApr || 0);
@@ -325,6 +332,50 @@ async function hourlyScan(pools) {
     if (coach.avoid) lines.push(coach.avoid);
   }
 
+  // ── APY Stability Checks ─────────────────────────────────────────────────
+  const stabilityChecks = [];
+  for (const strat of sortedStrategies) {
+    const pool = poolMap.get(strat.name);
+    if (!pool) continue;
+    const avg = get7dAvg(strat.coll);
+    if (avg && avg.avg_net != null) {
+      const current = pool.netSpread || 0;
+      const deviation = Math.abs(current - avg.avg_net) / Math.abs(avg.avg_net);
+      if (deviation > 0.3) { // 30% deviation = unstable
+        stabilityChecks.push({
+          symbol: strat.coll,
+          current: (current * 100).toFixed(3),
+          avg7d: (avg.avg_net * 100).toFixed(2),
+          stability: 'LOW',
+        });
+      }
+    }
+  }
+  if (stabilityChecks.length > 0) {
+    lines.push('');
+    lines.push('─── APY STABILITY ───');
+    for (const s of stabilityChecks) {
+      lines.push(`⚠️ ${s.symbol}: current ${s.current}% vs 7D avg ${s.avg7d}% (${s.stability})`);
+    }
+  }
+
+  // ── Exit / Rebalance Alerts ──────────────────────────────────────────────
+  const exitAlerts = [];
+  for (const strat of sortedStrategies) {
+    const pool = poolMap.get(strat.name);
+    if (!pool) continue;
+    const exits = await checkExitConditions({ symbol: strat.coll, netSpread: pool.netSpread, borrowApy: pool.borrowPool?.borrowApy });
+    exitAlerts.push(...exits.map(e => ({ ...e, symbol: strat.coll })));
+  }
+  if (exitAlerts.length > 0) {
+    lines.push('');
+    lines.push('─── EXIT ALERTS ───');
+    for (const a of exitAlerts) {
+      lines.push(`🔴 ${a.type}: ${a.message}`);
+      lines.push(`   → ${a.action}`);
+    }
+  }
+
   // ── LST Depeg Block ─────────────────────────────────────────────────────
   if (depegData.status !== 'par' && depegData.status !== 'unknown') {
     const ratio = depegData.ratio || 1;
@@ -461,6 +512,9 @@ async function main() {
   }
 
   console.log(`📊 ${pools.length} pools loaded`);
+
+  // Record rates for APY stability tracking (non-fatal)
+  try { recordRates(pools); } catch (e) { /* ignore */ }
 
   // Full scan every 12 hours
   if (hoursSinceFullScan >= 12) {
