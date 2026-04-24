@@ -1,5 +1,5 @@
 /**
- * score-engine.js
+ * score-engine.mjs
  * Money Coach v2 — Multi-factor strategy scoring
  * 
  * Score = net_30d_yield
@@ -14,7 +14,7 @@
  * All components expressed in percentage points (%)
  */
 
-import { getNAVXPrice } from './price-service.js';
+import { getNAVXPrice } from '../price-service.js';
 
 // ─── Component Weights (tunable) ───────────────────────────────
 const WEIGHTS = {
@@ -35,12 +35,6 @@ const TVL_TIERS = [
   { min: 0,          penalty: 3.0 },    // <$100K = high penalty
 ];
 
-// ─── NAVX Risk Thresholds ──────────────────────────────────────
-const NAVX_WEIGHTS = {
-  price_drop_7d: 0,    // Calculated from 7D price change
-  price_confirmed: true, // Set false if NAVX price unavailable
-};
-
 // ─── Core Scoring ────────────────────────────────────────────────
 
 /**
@@ -56,7 +50,7 @@ export async function computeScore(strategy, poolData, marketData) {
   breakdown.net_30d_yield = net30d;
 
   // 2. Liquidation risk penalty
-  const ltv = parseFloat(poolData.ltv || 0);
+  const ltv = parseFloat(poolData?.ltv || 0);
   const lev = parseFloat(strategy.lev || 1);
   const effectiveLTV = Math.min(ltv * lev, 0.95);
   const liqPenalty = Math.max(0, (effectiveLTV - 0.50) * WEIGHTS.liquidation_risk_penalty * 100);
@@ -64,7 +58,7 @@ export async function computeScore(strategy, poolData, marketData) {
 
   // 3. Reward token risk (NAVX volatility)
   let rewardTokenPenalty = 0;
-  if (marketData.navxPrice && marketData.navxChange24h !== undefined) {
+  if (marketData?.navxPrice && marketData?.navxChange24h !== undefined) {
     const navxDrop = Math.abs(marketData.navxChange24h);
     if (navxDrop > 20) rewardTokenPenalty = WEIGHTS.reward_token_risk * 1.5;
     else if (navxDrop > 10) rewardTokenPenalty = WEIGHTS.reward_token_risk;
@@ -78,7 +72,7 @@ export async function computeScore(strategy, poolData, marketData) {
 
   // 4. Depeg risk (haSUI/SUI ratio)
   let depegPenalty = 0;
-  if (marketData.hasuiSuiRatio !== undefined) {
+  if (marketData?.hasuiSuiRatio !== undefined) {
     const ratio = marketData.hasuiSuiRatio;
     if (ratio < 0.98) depegPenalty = WEIGHTS.depeg_risk * 2;
     else if (ratio < 0.995) depegPenalty = WEIGHTS.depeg_risk;
@@ -93,7 +87,7 @@ export async function computeScore(strategy, poolData, marketData) {
   breakdown.volatility_risk = -volPenalty;
 
   // 6. Low liquidity penalty (TVL-based)
-  const tvl = parseFloat(poolData.tvlUSD || 0);
+  const tvl = parseFloat(poolData?.tvlUSD || 0);
   const tvlPenalty = TVL_TIERS.find(t => tvl >= t.min)?.penalty ?? WEIGHTS.low_liquidity_penalty;
   breakdown.low_liquidity_penalty = -tvlPenalty;
 
@@ -102,7 +96,7 @@ export async function computeScore(strategy, poolData, marketData) {
   breakdown.gas_cost_penalty = -gasPenalty;
 
   // 8. Stability bonus (low spread volatility over 7D)
-  const spreadStability = parseFloat(poolData.spreadStd7d || 0);
+  const spreadStability = parseFloat(poolData?.spreadStd7d || 0);
   const stabilityBonus = Math.max(0, WEIGHTS.stability_bonus * (1 - spreadStability / 10));
   breakdown.stability_bonus = stabilityBonus;
 
@@ -127,7 +121,7 @@ export async function computeScore(strategy, poolData, marketData) {
 export async function rankStrategies(strategies, poolData, marketData) {
   const scored = await Promise.all(
     strategies.map(async (s) => {
-      const result = await computeScore(s, poolData.get(s.name) || {}, marketData);
+      const result = await computeScore(s, poolData?.get(s.name) || {}, marketData);
       return { ...s, score: result.score, scoreDetails: result };
     })
   );
@@ -158,7 +152,7 @@ Reason: ${avoid.scoreDetails?.warnings?.join(', ') || 'Negative score after pena
 
 // ─── Standalone test ─────────────────────────────────────────────
 async function runTests() {
-  console.log('=== score-engine.js standalone test ===\n');
+  console.log('=== score-engine.mjs standalone test ===\n');
 
   // Mock data for testing
   const mockStrategies = [
@@ -200,7 +194,7 @@ async function runTests() {
   console.log(coach.best);
   if (coach.avoid) console.log(coach.avoid);
 
-  console.log('\n✅ score-engine.js tests complete');
+  console.log('\n✅ score-engine.mjs tests complete');
 }
 
 runTests().catch(console.error);

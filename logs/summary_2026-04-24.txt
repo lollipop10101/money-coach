@@ -1,0 +1,14 @@
+📊 DAILY COACH SUMMARY — 2026-04-24
+
+Portfolio: No wallet — configure WALLET_ADDRESS
+Best opportunity: USDC→LBTC | Score: 138.88/100 | Spread: n/a%
+
+Risk alerts:
+  ⚠️ LST_DEPEG: haSUI depeg: 7.37% (threshold: 0.5%)
+  ⚠️ LST_DEPEG: haSUI depeg: 7.37% (threshold: 0.5%)
+  ⚠️ LST_DEPEG: haSUI depeg: 7.37% (threshold: 0.5%)
+
+Action today: REDUCE
+  ⚠️ LST_DEPEG: haSUI depeg: 7.37% (threshold: 0.5%)
+
+Next review: tomorrow 09:00

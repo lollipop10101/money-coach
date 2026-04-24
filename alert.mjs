@@ -14,8 +14,8 @@ mkdirSync('logs', { recursive: true });
 mkdirSync('reports', { recursive: true });
 import { getMarketPrediction } from './predictor.js';
 import { getNAVXPrice, getLSTDepegStatus } from './price-service.js';
-import { calcLiqBuffer, getHFTier, getPortfolioAction, checkStrategyRisk, getWalletPosition } from './risk-engine.js';
-import { rankStrategies, getCoachRecommendation } from './score-engine.js';
+import { calcLiqBuffer, getHFTier, getPortfolioAction, checkStrategyRisk, getWalletPosition } from './engines/risk-engine.mjs';
+import { rankStrategies, getCoachRecommendation } from './engines/score-engine.mjs';
 import { recordRates, get7dAvg } from './db.js';
 import { checkExitConditions } from './alert-exits.js';
 

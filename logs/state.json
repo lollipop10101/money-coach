@@ -1,9 +1,9 @@
 {
-  "lastAlert": "2026-04-24T22:11:36.241Z",
+  "lastAlert": "2026-04-24T23:48:00.406Z",
   "lastFullScan": "2026-04-24T11:48:16.242Z",
   "previousRates": {
     "USDSUI": {
-      "supplyApy": 6.999,
+      "supplyApy": 6.982,
       "borrowApy": 3.544
     },
     "suiUSDe": {
@@ -15,8 +15,8 @@
       "borrowApy": 0.472
     },
     "XAUm": {
-      "supplyApy": 5.113,
-      "borrowApy": 8.033
+      "supplyApy": 4.937,
+      "borrowApy": 8.032
     },
     "YBTC.B": {
       "supplyApy": 0,
@@ -32,22 +32,22 @@
     },
     "IKA": {
       "supplyApy": 4.932,
-      "borrowApy": 26.83
+      "borrowApy": 26.832
     },
     "xBTC": {
-      "supplyApy": 1.419,
+      "supplyApy": 1.418,
       "borrowApy": 0.496
     },
     "HAEDAL": {
-      "supplyApy": 13.012,
-      "borrowApy": 31.334
+      "supplyApy": 13.061,
+      "borrowApy": 31.339
     },
     "WAL": {
       "supplyApy": 16.913,
       "borrowApy": 13.499
     },
     "LBTC": {
-      "supplyApy": 1.752,
+      "supplyApy": 1.751,
       "borrowApy": 0.278
     },
     "SOL": {
@@ -63,8 +63,8 @@
       "borrowApy": 1.949
     },
     "suiUSDT": {
-      "supplyApy": 4.088,
-      "borrowApy": 3.791
+      "supplyApy": 4.086,
+      "borrowApy": 3.795
     },
     "BUCK": {
       "supplyApy": 0.122,
@@ -87,20 +87,20 @@
       "borrowApy": 0.255
     },
     "NS": {
-      "supplyApy": 18.944,
+      "supplyApy": 18.978,
       "borrowApy": 11.01
     },
     "USDY": {
-      "supplyApy": 6.572,
+      "supplyApy": 6.564,
       "borrowApy": 4.095
     },
     "suiETH": {
-      "supplyApy": 0.725,
+      "supplyApy": 0.724,
       "borrowApy": 0.986
     },
     "USDC": {
       "supplyApy": 4.421,
-      "borrowApy": 3.717
+      "borrowApy": 3.721
     },
     "AUSD": {
       "supplyApy": 0.467,
@@ -128,11 +128,11 @@
     },
     "wUSDT": {
       "supplyApy": 3.391,
-      "borrowApy": 70.266
+      "borrowApy": 70.268
     },
     "wUSDC": {
       "supplyApy": 2.189,
-      "borrowApy": 29.432
+      "borrowApy": 29.435
     },
     "SUI": {
       "supplyApy": 2.928,

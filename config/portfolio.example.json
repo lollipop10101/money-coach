@@ -1,0 +1,12 @@
+{
+  "maxPositions": 4,
+  "defaultCapitalUSD": 5000,
+  "minDeployUSD": 50,
+  "strategyWeights": {
+    "USDC→haSUI": 0.3,
+    "USDY→USDC": 0.25,
+    "USDC→LBTC": 0.25,
+    "USDC→SUI": 0.2
+  },
+  "rebalanceThreshold": 0.05
+}

@@ -1,19 +1,19 @@
 /**
- * risk-engine.js
+ * risk-engine.mjs
  * Money Coach v2 — Wallet-aware risk analysis
  * 
  * Uses @naviprotocol/lending SDK to fetch real positions.
- * Run standalone: node risk-engine.js
  */
 
-import { getLendingPositions, UserPositions, getHealthFactor } from '@naviprotocol/lending';
+import { getLendingPositions, UserPositions } from '@naviprotocol/lending';
+import riskPolicy from '../config/risk-policy.json' with { type: 'json' };
 
 // ─── Risk Thresholds ────────────────────────────────────────────
 const HARD_RULES = {
-  MAX_LTV: 0.60,          // Never borrow above 60% LTV
-  MIN_HEALTH_FACTOR: 1.8, // Never deploy if HF < 1.8
-  MIN_HASUI_RATIO: 0.995, // Alert if haSUI/SUI ratio drops below
-  MAX_BORROW_APY_SPIKE: 2.0, // % increase in 1h that triggers alert
+  MAX_LTV: riskPolicy.maxLtv,
+  MIN_HEALTH_FACTOR: riskPolicy.minHealthFactor,
+  MIN_HASUI_RATIO: 0.995,
+  MAX_BORROW_APY_SPIKE: riskPolicy.borrowApySpikeWarning,
 };
 
 // ─── Liquidation Buffer Tiers ──────────────────────────────────
@@ -105,24 +105,39 @@ export function checkStrategyRisk(collateralLTV, debtPrice, collateralPrice, lev
 }
 
 /**
- * getPositionSize — auto-calculate recommended deployment size
- * @param {string} strategyName
- * @param {object} pool - pool data
- * @param {object} walletPosition - optional live wallet position
- * @returns {{ sizePct: number, minPct: number, maxPct: number, maxDeploy: number, recommendation: string, riskTier: string }}
+ * Build risk summary for a strategy
+ */
+export async function buildRiskSummary(strategy, walletAddress) {
+  const position = await getWalletPosition(walletAddress);
+  const hfTier = position ? getHFTier(position.overview?.hf) : 'no-position';
+  const action = getPortfolioAction(position?.overview?.hf, strategy.ltv);
+
+  return {
+    strategy: strategy.name,
+    action,
+    healthFactor: position?.overview?.hf ?? null,
+    hfTier,
+    totalSupplyUSD: position?.overview?.totalSupplyValue ?? 0,
+    totalBorrowUSD: position?.overview?.totalBorrowValue ?? 0,
+    liqBuffer: calcLiqBuffer(strategy.ltv),
+    riskTier: checkStrategyRisk(strategy.ltv, strategy.debtPrice, 1, strategy.lev),
+  };
+}
+
+/**
+ * Backward-compatible position sizing (calls checkStrategyRisk internally).
+ * Moved logic to engines/position-sizing.mjs for new code.
  */
 export function getPositionSize(strategyName, pool, walletPosition = null) {
   const riskTier = checkStrategyRisk(pool.ltv, pool.debtPrice || 0, 1, pool.lev || 1);
 
-  // Base sizing by risk tier
   const sizingByTier = {
     'SAFE':    { min: 20, max: 30, label: 'Low risk — deploy 20-30% of capital' },
     'MODERATE': { min: 10, max: 15, label: 'Medium risk — deploy 10-15% of capital' },
     'RISKY':   { min: 0,  max: 5,  label: 'High risk — deploy 0-5% of capital' },
   };
 
-  // Hard block: never deploy if HF < 1.8
-  if (walletPosition && walletPosition.overview?.hf < 1.8) {
+  if (walletPosition && walletPosition.overview?.hf < HARD_RULES.MIN_HEALTH_FACTOR) {
     return {
       sizePct: 0,
       minPct: 0,
@@ -140,35 +155,15 @@ export function getPositionSize(strategyName, pool, walletPosition = null) {
     sizePct: (tier.min + tier.max) / 2,
     minPct: tier.min,
     maxPct: tier.max,
-    maxDeploy: 0, // caller calculates from capital
+    maxDeploy: 0,
     recommendation: tier.label,
     riskTier: riskTier.tier,
   };
 }
 
-/**
- * Build risk summary for a strategy
- */
-export async function buildRiskSummary(strategy, walletAddress) {
-  const position = await getWalletPosition(walletAddress);
-  const hfTier = position ? getHFTier(position.overview.hf) : 'no-position';
-  const action = getPortfolioAction(position?.overview.hf, strategy.ltv);
-
-  return {
-    strategy: strategy.name,
-    action,
-    healthFactor: position?.overview.hf ?? null,
-    hfTier,
-    totalSupplyUSD: position?.overview.totalSupplyValue ?? 0,
-    totalBorrowUSD: position?.overview.totalBorrowValue ?? 0,
-    liqBuffer: calcLiqBuffer(strategy.ltv),
-    riskTier: checkStrategyRisk(strategy.ltv, strategy.debtPrice, 1, strategy.lev),
-  };
-}
-
 // ─── Standalone test ─────────────────────────────────────────────
 async function runTests() {
-  console.log('=== risk-engine.js standalone test ===\n');
+  console.log('=== risk-engine.mjs standalone test ===\n');
 
   // Test calcLiqBuffer
   console.log('calcLiqBuffer:');
@@ -207,7 +202,7 @@ async function runTests() {
   const pos = await getWalletPosition('0x000000000000000000000000000000000000dEaD');
   console.log('  Result:', pos === null ? 'null (expected — no real position)' : pos);
 
-  console.log('\n✅ risk-engine.js tests complete');
+  console.log('\n✅ risk-engine.mjs tests complete');
 }
 
 runTests().catch(console.error);

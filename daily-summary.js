@@ -6,8 +6,9 @@
  */
 
 import * as navi from './navi.mjs';
-import { rankStrategies } from './score-engine.js';
-import { getHFTier, getPortfolioAction, getWalletPosition, getPositionSize } from './risk-engine.js';
+import { rankStrategies } from './engines/score-engine.mjs';
+import { getHFTier, getPortfolioAction, getWalletPosition } from './engines/risk-engine.mjs';
+import { getPositionSize } from './engines/position-sizing.mjs';
 import { checkExitConditions } from './alert-exits.js';
 import { get7dAvg } from './db.js';
 import { getNAVXPrice, getLSTDepegStatus } from './price-service.js';

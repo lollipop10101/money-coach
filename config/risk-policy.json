@@ -1,0 +1,11 @@
+{
+  "maxLtv": 0.6,
+  "minHealthFactor": 1.8,
+  "minCashBuffer": 0.1,
+  "maxSingleStrategyWeight": 0.35,
+  "depegWarningBps": 50,
+  "depegBlockBps": 100,
+  "navxDailyDropWarning": -8,
+  "borrowApySpikeWarning": 2,
+  "minScoreToDeploy": 70
+}

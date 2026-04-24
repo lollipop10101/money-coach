@@ -12,8 +12,8 @@
  */
 
 import fs from 'fs';
-import { getWalletPosition, getHFTier, getPortfolioAction, checkStrategyRisk } from './risk-engine.js';
-import { rankStrategies, getCoachRecommendation } from './score-engine.js';
+import { getWalletPosition, getHFTier, getPortfolioAction, checkStrategyRisk } from './engines/risk-engine.mjs';
+import { rankStrategies, getCoachRecommendation } from './engines/score-engine.mjs';
 import { getNAVXPrice, getLSTDepegStatus } from './price-service.js';
 import { getStrategies } from './alert.mjs';
 import { generateDailySummary } from './daily-summary.js';
