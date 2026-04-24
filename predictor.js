@@ -113,11 +113,11 @@ function calculateMACD(closes, fast = 12, slow = 26, signalPeriod = 9) {
 
   const fastEMA = ema(closes, fast);
   const slowEMA = ema(closes, slow);
-  const macdLine = fastEMA.map((v, i) => v - (slowEMA[i] ?? slowEMA[slowEMA.length - 1]));
-
-  // Signal line is EMA of MACD line
+  // Compute MACD only over the overlapping tail — no padding
+  const overlapLen = Math.min(fastEMA.length, slowEMA.length);
+  const start = fastEMA.length - overlapLen;
+  const macdLine = fastEMA.slice(start).map((v, i) => v - slowEMA[start + i]);
   const signalLine = ema(macdLine, signalPeriod);
-
   const histogram = macdLine.map((v, i) => v - signalLine[i]);
 
   return {
