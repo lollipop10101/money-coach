@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // run-backtest.js — Run the NAVI Carry Trade Backtest
 
-const { Backtester } = require("./backtester.cjs");
-const { Reporter } = require("./reporter.cjs");
-const fs = require("fs");
-const path = require("path");
+import { Backtester } from "./backtester.cjs";
+import { Reporter } from "./reporter.cjs";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Ensure directories exist
 ["data", "logs", "reports"].forEach(dir => {

@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node alert.mjs",
     "scan": "node tracker.js",
-    "backtest": "node strategies.mjs",
+    "backtest": "node backtester.cjs",
     "bot": "node bot.js",
     "alert": "node alert.mjs",
     "risk": "node risk-engine.js",
