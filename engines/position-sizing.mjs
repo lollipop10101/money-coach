@@ -1,35 +1,51 @@
 /**
  * position-sizing.mjs
  * Money Coach v2 — Kelly Criterion position sizing
- * 
- * Formula (Kelly Criterion simplified):
- *   f = (b × p - q) / b
- *   where b = net odds, p = win probability, q = loss probability (1-p)
- * 
- * Adjusted for:
- *   - Available capital
- *   - Current portfolio LTV
- *   - Risk policy constraints
+ *
+ * Two calling conventions:
+ * 1. Old (Kelly): { netOdds, winRate, availableCapital, currentLtv, strategyLtv, poolData, walletPosition }
+ * 2. New (Portfolio): { score, riskLevel, totalCapital, cashAvailable } with policy
  */
 
 import { calcLiqBuffer, getHFTier } from './risk-engine.mjs';
 import riskPolicy from '../config/risk-policy.json' with { type: 'json' };
 
 /**
- * Suggest position size for a strategy
- * @param {object} params
- * @param {number} params.netOdds - Net spread as decimal (e.g. 0.03 for 3%)
- * @param {number} params.winRate - Estimated win probability (0-1)
- * @param {number} params.availableCapital - Available capital in USD
- * @param {number} params.currentLtv - Current portfolio LTV (0-1)
- * @param {number} params.strategyLtv - Strategy LTV (0-1)
- * @param {object} [params.poolData] - Optional pool data for risk check
- * @param {object} [params.walletPosition] - Optional live wallet position
- * @returns {{ sizePct: number, sizeUSD: number, kellyFrac: number, recommendation: string }}
+ * New calling convention — used by analysePortfolio
  */
-export function suggestPositionSize({ netOdds, winRate, availableCapital, currentLtv, strategyLtv, poolData, walletPosition }) {
+export function suggestPositionSize({ score, riskLevel, totalCapital, cashAvailable }, policy) {
+  const pol = policy || riskPolicy;
+
+  if (!score || isNaN(score)) {
+    return { action: 'WAIT', amountUsd: 0, reason: 'Invalid score' };
+  }
+
+  if (score < (pol.minScoreToDeploy || 70)) {
+    return { action: 'WAIT', amountUsd: 0, reason: `Score ${score.toFixed(0)} below minimum ${pol.minScoreToDeploy}` };
+  }
+
+  let basePct = 0;
+  if (riskLevel === 'LOW') basePct = 0.25;
+  else if (riskLevel === 'MEDIUM') basePct = 0.15;
+  else if (riskLevel === 'HIGH') basePct = 0.05;
+
+  // Scale by score above threshold
+  const scoreHeadroom = (score - (pol.minScoreToDeploy || 70)) / 30; // 0-1 scale above min
+  const scaleFactor = 0.5 + scoreHeadroom * 0.5;
+  const sizePct = basePct * scaleFactor;
+
+  const amountUsd = Math.round(totalCapital * sizePct);
+
+  const action = amountUsd >= 50 ? 'DEPLOY' : 'WAIT';
+  return { action, amountUsd, sizePct: (sizePct * 100).toFixed(1) };
+}
+
+/**
+ * Old calling convention — kept for backward compatibility
+ */
+export function suggestPositionSizeKelly({ netOdds, winRate, availableCapital, currentLtv, strategyLtv, poolData, walletPosition }) {
   // Kelly fraction: f = (b × p - q) / b
-  const b = netOdds; // net odds = net spread
+  const b = netOdds;
   const p = winRate;
   const q = 1 - p;
   const kellyFrac = Math.max(0, (b * p - q) / b);
@@ -55,7 +71,6 @@ export function suggestPositionSize({ netOdds, winRate, availableCapital, curren
     };
   }
 
-  // Size as % of available capital
   const sizePct = ltvAdjusted / availableCapital;
   const sizeUSD = ltvAdjusted;
 

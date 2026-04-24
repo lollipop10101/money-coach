@@ -18,6 +18,7 @@ import { calcLiqBuffer, getHFTier, getPortfolioAction, checkStrategyRisk, getWal
 import { rankStrategies, getCoachRecommendation } from './engines/score-engine.mjs';
 import { recordRates, get7dAvg } from './db.js';
 import { checkExitConditions } from './alert-exits.js';
+import { analysePortfolio } from './engines/portfolio-engine.mjs';
 
 const API = "https://open-api.naviprotocol.io/api/navi/pools?env=prod&sdk=1.4.3&market=main";
 const LOG_FILE = "logs/alerts.log";
@@ -322,14 +323,57 @@ async function hourlyScan(pools) {
   }
 
   // ── Coach Mode — ranked strategies with reasoning ─────────────────────
-  const ranked = await rankStrategies(sortedStrategies, poolMap, marketData);
-  const coach = await getCoachRecommendation(ranked, walletPosition, marketData);
+  // Build strategy objects for portfolio engine
+  const strategyObjs = sortedStrategies.map(strat => {
+    const pool = poolMap.get(strat.name);
+    const spread = pool ? (pool.supplyApy || 0) - (pool.borrowPool?.borrowApy || 0) : 0;
+    const organicSpread = pool ? (pool.organicSupplyApy || 0) - (pool.organicBorrowApy || 0) : 0;
+    return {
+      name: strat.name,
+      spread,
+      organicSpread,
+      incentiveApr: pool?.incentivizedSupplyApr || 0,
+      ltv: pool?.ltv || 0,
+      healthFactor: walletPosition?.overview?.hf || null,
+      stabilityScore: 50,
+    };
+  });
+
+  const market = {
+    depeg: { premium_bps: depegData?.premium_bps || 0 },
+    navx: { change24h: navxPriceData?.change24h || 0 }
+  };
+
+  const portfolio = {
+    cash: { USDC: 0, SUI: 0 },
+    positions: [],
+  };
+
+  const policy = JSON.parse(readFileSync('./config/risk-policy.json', 'utf-8'));
+  const recommendations = analysePortfolio({ portfolio, strategies: strategyObjs, market, policy });
+  const best = recommendations.find(r => r.action !== 'BLOCKED') || recommendations[0];
+  const blocked = recommendations.filter(r => r.action === 'BLOCKED');
 
   lines.push('');
-  lines.push('─── COACH MODE ───');
-  if (coach.best) {
-    lines.push(coach.best);
-    if (coach.avoid) lines.push(coach.avoid);
+  lines.push('🧠 NAVI Portfolio Coach');
+  lines.push('');
+  if (best) {
+    lines.push(`Best Action: ${best.action}`);
+    lines.push(`Strategy: ${best.strategy}`);
+    if (best.amountUsd > 0) lines.push(`Amount: $${typeof best.amountUsd === 'number' ? best.amountUsd.toFixed(0) : best.amountUsd}`);
+    lines.push(`Score: ${best.score}/100`);
+    lines.push(`Risk: ${best.riskLevel}`);
+    lines.push('');
+    lines.push('Reason:');
+    lines.push(best.reason);
+  }
+  if (blocked.length > 0) {
+    lines.push('');
+    lines.push('Blocked:');
+    for (const b of blocked) {
+      lines.push(`  ${b.strategy}`);
+      lines.push(`  Reason: ${b.warnings.join('; ') || 'Risk threshold exceeded'}`);
+    }
   }
 
   // ── APY Stability Checks ─────────────────────────────────────────────────
