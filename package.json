@@ -6,13 +6,17 @@
   "scripts": {
     "start": "node alert.mjs",
     "scan": "node tracker.mjs",
-    "backtest": "node backtester.mjs"
+    "backtest": "node backtester.mjs",
+    "bot": "node bot.js",
+    "alert": "node alert.mjs",
+    "risk": "node risk-engine.js",
+    "score": "node score-engine.js"
   },
   "dependencies": {
     "@mysten/sui": "^1.45.2",
     "@naviprotocol/lending": "^1.4.3",
     "axios": "^1.7.0",
-    "dotenv": "^16.4.0",
+    "dotenv": "^16.6.1",
     "node-cache": "^5.1.2"
   }
 }

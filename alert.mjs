@@ -14,6 +14,8 @@ mkdirSync('logs', { recursive: true });
 mkdirSync('reports', { recursive: true });
 import { getMarketPrediction } from './predictor.js';
 import { getNAVXPrice, getLSTDepegStatus } from './price-service.js';
+import { calcLiqBuffer, getHFTier, getPortfolioAction, checkStrategyRisk, getWalletPosition } from './risk-engine.js';
+import { rankStrategies, getCoachRecommendation } from './score-engine.js';
 
 const API = "https://open-api.naviprotocol.io/api/navi/pools?env=prod&sdk=1.4.3&market=main";
 const WALLET_FILE = "config/wallet.json";
@@ -33,9 +35,7 @@ const REGIME_ADVICE = {
 
 // Telegram - load from environment
 const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID } = process.env;
-if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-  throw new Error("Missing Telegram config: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env");
-}
+const TELEGRAM_CONFIGURED = !!(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID);
 
 // ─── Load state ────────────────────────────────────────────────────────────────
 let state = { lastAlert: null, lastFullScan: null, previousRates: {} };
@@ -150,18 +150,11 @@ const STRATEGIES = [
   { name: "USDC→USDC", coll: "USDC", debt: "USDC", lev: 1, debtPrice: 1 },
 ];
 
-// ─── Per-strategy liquidation buffer ────────────────────────────────────────
-function calcLiqBuffer(ltv) {
-  if (!ltv || ltv <= 0) return null;
-  const bufferPct = (1 / ltv - 1) * 100;
-  return {
-    bufferPct: parseFloat(bufferPct.toFixed(1)),
-    tierLabel: bufferPct > 50 ? '✅ SAFE' : bufferPct > 25 ? '⚠️ MODERATE' : '🔴 RISKY'
-  };
-}
+export function getStrategies() { return STRATEGIES; }
 
 // ─── Telegram ────────────────────────────────────────────────────────────────
 async function sendAlert(message) {
+  if (!TELEGRAM_CONFIGURED) return false;
   try {
     await axios.post(
       `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
@@ -235,6 +228,33 @@ async function hourlyScan(pools) {
   };
   const weights = regimeWeights[regime] || regimeWeights.SIDEWAYS;
 
+  // ── Wallet position (if configured) ─────────────────────────────────
+  const walletAddress = process.env.WALLET_ADDRESS;
+  let walletPosition = null;
+  if (walletAddress) {
+    walletPosition = await getWalletPosition(walletAddress).catch(() => null);
+  }
+
+  // ── Market data for scoring ─────────────────────────────────────────────
+  const navxPriceData = await getNAVXPrice().catch(() => ({ price: null, change24h: null }));
+  const depegData = await getLSTDepegStatus().catch(() => ({ ratio: 1, status: 'unknown', premium_bps: 0 }));
+  const marketData = {
+    navxPrice: navxPriceData?.price,
+    navxChange24h: navxPriceData?.change24h,
+    navxPriceConfirmed: !!navxPriceData?.price,
+    hasuiSuiRatio: depegData?.ratio,
+  };
+
+  // Sort strategies by regime weight (highest first)
+  const sortedStrategies = [...STRATEGIES].sort((a, b) => (weights[b.name] || 1) - (weights[a.name] || 1));
+
+  // Build strategy-keyed pool map for scoring
+  const poolMap = new Map(sortedStrategies.map(strat => {
+    const collPool = pools.find((p) => p.symbol === strat.coll);
+    const debtPool = pools.find((p) => p.symbol === strat.debt);
+    return [strat.name, { ...collPool, debtPool }];
+  }));
+
   const time = new Date().toLocaleString();
   const lines = [];
 
@@ -243,9 +263,6 @@ async function hourlyScan(pools) {
   lines.push("");
 
   let foundOpportunity = false;
-
-  // Sort strategies by regime weight (highest first)
-  const sortedStrategies = [...STRATEGIES].sort((a, b) => (weights[b.name] || 1) - (weights[a.name] || 1));
 
   for (const strat of sortedStrategies) {
     const collPool = pools.find((p) => p.symbol === strat.coll);
@@ -257,8 +274,14 @@ async function hourlyScan(pools) {
     const side = parseFloat(calc30d(collPool.supplyApy, debtPool.borrowApy, collPool.ltv, strat.debtAsset ? 0.02 : 0, strat.lev));
     const spread = collPool.supplyApy - debtPool.borrowApy;
 
-    // Emoji based on SPREAD (yield differential), not 30D return
-    const emoji = spread > 2 ? "✅" : spread > 0 ? "⚠️" : "❌";
+    // Add risk tier from risk-engine
+    const riskTier = checkStrategyRisk(collPool.ltv, strat.debtPrice, 1, strat.lev);
+    const liqBuffer = calcLiqBuffer(collPool.ltv * strat.lev);
+    const hfTier = walletPosition ? getHFTier(walletPosition.overview.hf) : null;
+
+    // Use portfolio action for emoji (from risk-engine)
+    const action = getPortfolioAction(walletPosition?.overview.hf, collPool.ltv * strat.lev);
+    const emoji = action.emoji;
     const stratWeight = weights[strat.name] || 1;
 
     const netSpread = (collPool.supplyApy - debtPool.borrowApy).toFixed(1);
@@ -278,9 +301,12 @@ async function hourlyScan(pools) {
     // Liquidation buffer for leveraged strategies
     if (strat.lev > 1) {
       const buf = calcLiqBuffer(collPool.ltv);
-      if (buf) {
-        lines.push(`   ⚠️ LIQUIDATION BUFFER: +${buf.bufferPct}% (${buf.tierLabel})`);
+      if (buf != null) {
+        lines.push(`   ⚠️ LIQUIDATION BUFFER: +${buf.toFixed(1)}% (${riskTier.tier})`);
       }
+    }
+    if (hfTier) {
+      lines.push(`   💼 HF Tier: ${hfTier}`);
     }
     lines.push("");
 
@@ -290,24 +316,29 @@ async function hourlyScan(pools) {
     }
   }
 
-  // ── NAVX price + LST depeg ────────────────────────────────────────────
-  const [navxData, depeg] = await Promise.all([
-    getNAVXPrice().catch(() => ({ price: null, change24h: null })),
-    getLSTDepegStatus().catch(() => ({ status: 'unknown', premium_bps: 0 })),
-  ]);
+  // ── Coach Mode — ranked strategies with reasoning ─────────────────────
+  const ranked = await rankStrategies(sortedStrategies, poolMap, marketData);
+  const coach = await getCoachRecommendation(ranked, walletPosition, marketData);
 
-  // ── LST Depeg Block (after strategies, before regime advice) ─────────────
-  if (depeg.status !== 'par' && depeg.status !== 'unknown') {
-    const ratio = depeg.ratio || 1;
-    const bps = depeg.premium_bps || 0;
+  lines.push('');
+  lines.push('─── COACH MODE ───');
+  if (coach.best) {
+    lines.push(coach.best);
+    if (coach.avoid) lines.push(coach.avoid);
+  }
+
+  // ── LST Depeg Block ─────────────────────────────────────────────────────
+  if (depegData.status !== 'par' && depegData.status !== 'unknown') {
+    const ratio = depegData.ratio || 1;
+    const bps = depegData.premium_bps || 0;
     const bpsPct = (bps / 100).toFixed(2);
     let statusLabel, entrySignal;
-    if (depeg.status === 'discount') {
+    if (depegData.status === 'discount') {
       statusLabel = `DISCOUNT -${bpsPct}%`;
       if (bps > 50) {
         entrySignal = "✅ BONUS ENTRY — haSUI depegged";
       }
-    } else if (depeg.status === 'premium') {
+    } else if (depegData.status === 'premium') {
       statusLabel = `PREMIUM +${bpsPct}%`;
       if (bps > 50) {
         entrySignal = "⚠️ AVOID LST entry — premium";
@@ -320,12 +351,12 @@ async function hourlyScan(pools) {
     }
   }
 
-  // ── NAVX price inline ───────────────────────────────────────────────────
-  const navxChangeStr = navxData.change24h != null
-    ? `${navxData.change24h > 0 ? '+' : ''}${navxData.change24h.toFixed(1)}%`
+  // ── NAVX price inline (reuse from marketData fetch) ───────────────────
+  const navxChangeStr = navxPriceData.change24h != null
+    ? `${navxPriceData.change24h > 0 ? '+' : ''}${navxPriceData.change24h.toFixed(1)}%`
     : 'n/a';
-  const navxPriceWarning = navxData.price ? '' : ' ⚠️ Incentive yield unconfirmed';
-  lines.push(`NAVX: $${(navxData.price || 0).toFixed(4)} (${navxChangeStr} 24h)${navxPriceWarning}`);
+  const navxPriceWarning = navxPriceData.price ? '' : ' ⚠️ Incentive yield unconfirmed';
+  lines.push(`NAVX: $${(navxPriceData.price || 0).toFixed(4)} (${navxChangeStr} 24h)${navxPriceWarning}`);
 
   // ── Regime advice (after NAVX price) ───────────────────────────────────
   const regimeAdvice = REGIME_ADVICE[regime] || REGIME_ADVICE.SIDEWAYS;
@@ -452,7 +483,9 @@ async function boot() {
   console.log("   Monitored: USDY→USDC, USDC→LBTC 2x, USDC→haSUI 2x");
   console.log("   Regime-aware weighting via predictor.js/Ollama");
   console.log("   Full scan: every 12 hours + auto-pair discovery");
-  console.log("   Alert: only on spread > 2% or big moves\n");
+  console.log("   Alert: only on spread > 2% or big moves");
+  console.log(`   Telegram: ${TELEGRAM_CONFIGURED ? '✅ configured' : '⚠️ not configured (set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)'}`);
+  console.log(`   Coach Mode: ✅ active\n`);
 
   await main();
 
