@@ -5,8 +5,8 @@
   "description": "NAVI DeFi yield tracker - monitors Sui lending protocol for positive carry trade opportunities",
   "scripts": {
     "start": "node alert.mjs",
-    "scan": "node tracker.mjs",
-    "backtest": "node backtester.mjs",
+    "scan": "node tracker.js",
+    "backtest": "node strategies.mjs",
     "bot": "node bot.js",
     "alert": "node alert.mjs",
     "risk": "node risk-engine.js",
