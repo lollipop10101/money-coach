@@ -113,7 +113,7 @@ function calculateMACD(closes, fast = 12, slow = 26, signalPeriod = 9) {
 
   const fastEMA = ema(closes, fast);
   const slowEMA = ema(closes, slow);
-  const macdLine = fastEMA.map((v, i) => v - slowEMA[i]);
+  const macdLine = fastEMA.map((v, i) => v - (slowEMA[i] ?? slowEMA[slowEMA.length - 1]));
 
   // Signal line is EMA of MACD line
   const signalLine = ema(macdLine, signalPeriod);
@@ -192,7 +192,7 @@ export async function getMarketPrediction() {
     const deterministicPrediction = btc24hChangeRate > 0 ? "BULL" : btc24hChangeRate < 0 ? "BEAR" : "SIDEWAYS";
     const deterministicConfidence = Math.min(Math.abs(btc24hChangeRate) * 5, 50);
 
-    const llmResult = await callOllama(fallback);
+    const llmResult = await callOllama(JSON.stringify(fallback));
     if (llmResult && llmResult.regime) {
       return { ...fallback, prediction: llmResult.regime, confidence: llmResult.confidence || deterministicConfidence, reason: llmResult.reason };
     }
