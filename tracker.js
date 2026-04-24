@@ -13,6 +13,8 @@ const API_BASE = "https://open-api.naviprotocol.io/api/navi";
 const WALLET = "0x0eb41ba9b08b07a45aef2459a3a192ff4de2f6ccc4a41bc85febc1a10e75a908";
 const SDK_VERSION = "1.4.3";
 
+function parseLTV(raw) { return Number(raw || 0) / 1e27; }
+
 /** Fetch all pool data */
 async function getAllPools() {
   const url = `${API_BASE}/pools?env=prod&sdk=${SDK_VERSION}&market=main`;
@@ -59,7 +61,7 @@ function parsePool(pool) {
     totalSupply,
     totalBorrow,
     leftSupply,
-    ltv: parseFloat(pool.ltv || 0) / 1e26, // Convert from 10^26
+    ltv: parseLTV(pool.ltv),
     positive: supplyApy > borrowApy,
     // ── Phase 2: separated organic / incentivized ──────────────────────
     organicSupplyApy,
