@@ -4,25 +4,15 @@
  * Uses: CoinGecko (primary), Binance (SUI fallback)
  */
 
-import { spawn } from 'node:child_process';
+import axios from "axios";
 
 const CACHE_TTL_MS = 60_000;
 let priceCache = { navx: null, hasui: null, sui: null, navxChange24h: null };
 let priceCacheTime = 0;
 
-function curl(url) {
-  return new Promise((resolve, reject) => {
-    const child = spawn('/usr/bin/curl', ['-s', url]);
-    let stdout = '', stderr = '';
-    child.stdout.on('data', d => stdout += d);
-    child.stderr.on('data', d => stderr += d);
-    child.on('close', (code) => {
-      if (code !== 0) { reject(new Error(stderr || `curl exit ${code}`)); return; }
-      try { resolve(JSON.parse(stdout)); }
-      catch { reject(new Error('Invalid JSON')); }
-    });
-    child.on('error', reject);
-  });
+async function fetchJSON(url) {
+  const { data } = await axios.get(url, { timeout: 15000 });
+  return data;
 }
 
 async function getNAVXPrice() {
@@ -30,7 +20,7 @@ async function getNAVXPrice() {
     return { price: priceCache.navx, change24h: priceCache.navxChange24h };
   }
   try {
-    const cg = await curl('https://api.coingecko.com/api/v3/simple/price?ids=navi&vs_currencies=usd&include_24hr_change=true');
+    const cg = await fetchJSON('https://api.coingecko.com/api/v3/simple/price?ids=navi&vs_currencies=usd&include_24hr_change=true');
     const price = cg?.navi?.usd || null;
     const change24h = cg?.navi?.usd_24h_change || null;
     priceCache.navx = price;
@@ -48,7 +38,7 @@ async function gethaSUIPrice() {
     return priceCache.hasui;
   }
   try {
-    const cg = await curl('https://api.coingecko.com/api/v3/simple/price?ids=haedal-staked-sui&vs_currencies=usd&include_24hr_change=true');
+    const cg = await fetchJSON('https://api.coingecko.com/api/v3/simple/price?ids=haedal-staked-sui&vs_currencies=usd&include_24hr_change=true');
     if (cg?.['haedal-staked-sui']?.usd) {
       priceCache.hasui = cg['haedal-staked-sui'].usd;
       priceCacheTime = Date.now();
@@ -65,7 +55,7 @@ async function getSUIPrice() {
     return priceCache.sui;
   }
   try {
-    const data = await curl('https://api.binance.com/api/v3/ticker/price?symbol=SUIUSDT');
+    const data = await fetchJSON('https://api.binance.com/api/v3/ticker/price?symbol=SUIUSDT');
     const price = parseFloat(data?.price) || null;
     priceCache.sui = price;
     priceCacheTime = Date.now();
