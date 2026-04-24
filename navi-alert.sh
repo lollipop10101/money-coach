@@ -1,6 +1,6 @@
 #!/bin/bash
 ACTION="${1:-start}"
-DIR="/home/zouiner/.openclaw/agents/manager/money-coach-project"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIDFILE="$DIR/alert.pid"
 LOG="$DIR/logs/alert.log"
 
