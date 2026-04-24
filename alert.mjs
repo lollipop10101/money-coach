@@ -21,6 +21,9 @@ const LOG_FILE = "logs/alerts.log";
 const STATE_FILE = "logs/state.json";
 const LAST_FULL_SCAN_FILE = "logs/last_full_scan.json";
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function parseLTV(raw) { return Number(raw || 0) / 1e27; }
+
 // ─── Regime advice map ─────────────────────────────────────────────────────────
 const REGIME_ADVICE = {
   BULL:     "Avoid SUI/LST borrows. Focus Stable-to-Stable carry.",
@@ -48,7 +51,7 @@ async function getPools() {
     // Legacy aliases
     supplyApy: parseFloat(p.supplyIncentiveApyInfo?.apy || p.supplyApy || 0),
     borrowApy: parseFloat(p.borrowIncentiveApyInfo?.apy || p.borrowApy || 0),
-    ltv: parseFloat(p.ltv || 0) / 1e27,
+    ltv: parseLTV(p.ltv),
     totalSupply: parseFloat(p.totalSupply || 0) / 1e9,
     // Phase 2: separated organic / incentivized
     organicSupplyApy: (() => {
