@@ -18,10 +18,8 @@ import { calcLiqBuffer, getHFTier, getPortfolioAction, checkStrategyRisk, getWal
 import { rankStrategies, getCoachRecommendation } from './score-engine.js';
 
 const API = "https://open-api.naviprotocol.io/api/navi/pools?env=prod&sdk=1.4.3&market=main";
-const WALLET_FILE = "config/wallet.json";
 const LOG_FILE = "logs/alerts.log";
 const STATE_FILE = "logs/state.json";
-const LAST_FULL_SCAN_FILE = "logs/last_full_scan.json";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function parseLTV(raw) { return Number(raw || 0) / 1e27; }
