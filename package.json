@@ -4,7 +4,7 @@
   "type": "module",
   "description": "NAVI DeFi yield tracker - monitors Sui lending protocol for positive carry trade opportunities",
   "dependencies": {
-    "@mysten/sui": "^1.30.0",
+    "@mysten/sui": "^1.45.2",
     "@naviprotocol/lending": "^1.4.3",
     "axios": "^1.7.0",
     "node-cache": "^5.1.2"
