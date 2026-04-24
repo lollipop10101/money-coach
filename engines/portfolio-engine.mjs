@@ -21,7 +21,7 @@ function scoreStrategy({ spread, organicSpread, incentiveApr, navxChange24h, dep
   const base = spread * 10;
   const penalty = Math.max(0, ltv - 0.5) * 20;
   const navxPenalty = navxChange24h < -8 ? 10 : 0;
-  const depegPenalty = Math.abs(depegBps) > 50 ? 5 : 0;
+  const depegPenalty = depegBps < -50 ? 5 : 0; // penalise only actual depeg (discount), not premium
   return Math.max(0, Math.min(100, base - penalty - navxPenalty - depegPenalty + (stabilityScore || 0) / 10));
 }
 
@@ -40,11 +40,12 @@ function assessRisk({ ltv, healthFactor, depegBps, navxChange24h }, policy) {
     warnings.push(`HF ${healthFactor.toFixed(2)} below minimum`);
   }
 
-  if (Math.abs(depegBps) > (policy?.depegBlockBps || 100)) {
+  // Only block on actual depeg (discount, ratio < 1). Premium is not a depeg — warn only.
+  if (depegBps < -(policy?.depegBlockBps || 100)) {
     blocked = true;
-    warnings.push(`Depeg ${depegBps.toFixed(0)}bps exceeds block threshold`);
-  } else if (Math.abs(depegBps) > (policy?.depegWarningBps || 50)) {
-    warnings.push(`Depeg ${depegBps.toFixed(0)}bps — monitor closely`);
+    warnings.push(`Depeg ${Math.abs(depegBps).toFixed(0)}bps exceeds block threshold`);
+  } else if (depegBps > (policy?.depegWarningBps || 50)) {
+    warnings.push(`haSUI premium ${depegBps.toFixed(0)}bps — avoid LST entry`);
   }
 
   if (navxChange24h < (policy?.navxDailyDropWarning || -8)) {
@@ -60,8 +61,11 @@ function buildReason(strategy, score, risk) {
     const parts = [`Score ${score}/100`, `Spread ${strategy.spread.toFixed(2)}%`, `Risk ${risk.riskLevel}`];
     const depegBlock = risk.warnings.find(w => w.includes('Depeg'));
     if (depegBlock) {
-      const bps = parseFloat(depegBlock.match(/[\d.]+/)?.[0] || 0);
-      if (bps > 0) parts.push(`haSUI ${bps > 200 ? 'significant' : ''} premium`);
+      parts.push('haSUI depeg detected');
+    }
+    const premiumWarn = risk.warnings.find(w => w.includes('premium'));
+    if (premiumWarn) {
+      parts.push('haSUI premium elevated');
     }
     const hfBlock = risk.warnings.find(w => w.includes('HF'));
     if (hfBlock) parts.push(hfBlock);
