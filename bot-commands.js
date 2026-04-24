@@ -16,6 +16,7 @@ import { getWalletPosition, getHFTier, getPortfolioAction, checkStrategyRisk } f
 import { rankStrategies, getCoachRecommendation } from './score-engine.js';
 import { getNAVXPrice, getLSTDepegStatus } from './price-service.js';
 import { getStrategies } from './alert.mjs';
+import { generateDailySummary } from './daily-summary.js';
 import * as navi from './navi.mjs';
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -400,6 +401,16 @@ async function cmdStatus(ctx) {
   ].join('\n'));
 }
 
+// ─── /summary — Daily coach summary ────────────────────────────────────
+async function cmdSummary(ctx) {
+  try {
+    const report = await generateDailySummary();
+    ctx.reply(report);
+  } catch (err) {
+    ctx.reply('Failed to generate summary: ' + err.message);
+  }
+}
+
 // ─── Unknown command fallback ─────────────────────────────────────────
 async function cmdUnknown(ctx) {
   ctx.reply(
@@ -421,6 +432,7 @@ export const COMMANDS = {
   '/deploy':      cmdDeploy,
   '/alert':       cmdAlert,
   '/status':      cmdStatus,
+  '/summary':     cmdSummary,
 };
 
 export function registerCommands(bot) {
