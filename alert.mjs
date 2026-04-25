@@ -108,12 +108,26 @@ function formatPct(v, digits = 2) {
   return `${sign}${v.toFixed(digits)}%`;
 }
 
+function isLSTDebt(symbol) {
+  return ["haSUI", "vSUI", "stSUI"].includes(symbol);
+}
+
+function isDirectionalDebt(symbol) {
+  return ["haSUI", "vSUI", "stSUI", "LBTC", "BTC", "SUI"].includes(symbol);
+}
+
 function actionEmoji(action, riskLevel) {
   if (action === "DEPLOY") return "🟢";
-  if (action === "REDUCE") return "🟠";
-  if (action === "EXIT") return "🔴";
+  if (action === "WAIT") return "⏸️";
   if (riskLevel === "HIGH") return "🔴";
-  return "⏸️";
+  return "🟡";
+}
+
+function getRegimeAdvice(regime, depegData) {
+  if (depegData?.status === "premium" && depegData?.premium_bps > 50) {
+    return "BEAR regime, but haSUI premium is too high. Avoid LST borrow entries.";
+  }
+  return REGIME_ADVICE[regime] || REGIME_ADVICE.SIDEWAYS;
 }
 
 // This correctly models NAVI's interest accrual (interest-on-interest avoided).
@@ -295,8 +309,11 @@ async function hourlyScan(pools) {
     const incentiveApr = collPool.incentivizedSupplyApr || 0;
     const totalSpread = organicSpread + incentiveApr;
     const stratWeight = weights[strat.name] || 1;
-    const stratEmoji = actionEmoji(action.label, collPool.ltv * strat.lev > 0.65 ? "HIGH" : "LOW");
-    lines.push(`${stratEmoji} ${strat.name} (${strat.lev}x) w${stratWeight.toFixed(1)}`);
+    const effectiveLtv = collPool.ltv * strat.lev;
+    const stratRisk = effectiveLtv > 0.75 ? "HIGH" : effectiveLtv > 0.60 ? "MEDIUM" : "LOW";
+    const stratAction = stratRisk === "HIGH" ? "AVOID" : stratRisk === "MEDIUM" ? "MONITOR" : "MONITOR";
+    const stratEmoji = stratRisk === "HIGH" ? "🔴" : stratRisk === "MEDIUM" ? "🟡" : "🟢";
+    lines.push(`${stratEmoji} ${stratAction} ${strat.name} (${strat.lev}x) w${stratWeight.toFixed(1)}`);
     lines.push(`   Net Spread: ${formatPct(totalSpread)} (Organic + Incentives)`);
     lines.push(`   ├─ Organic: ${formatPct(organicSpread)}`);
     lines.push(`   └─ Incentives: ${formatPct(incentiveApr)}${incentiveApr > 0 ? " ⚠️" : ""}`);
@@ -328,6 +345,7 @@ async function hourlyScan(pools) {
     const organicSpread = pool ? (pool.organicSupplyApy || 0) - (pool.organicBorrowApy || 0) : 0;
     return {
       name: strat.name,
+      debt: strat.debt,
       spread,
       organicSpread,
       incentiveApr: pool?.incentivizedSupplyApr || 0,
@@ -338,7 +356,7 @@ async function hourlyScan(pools) {
   });
 
   const market = {
-    depeg: { premium_bps: depegData?.premium_bps || 0 },
+    depeg: { status: depegData?.status || 'unknown', premium_bps: depegData?.premium_bps || 0 },
     navx: { change24h: navxPriceData?.change24h || 0 }
   };
 
@@ -349,28 +367,17 @@ async function hourlyScan(pools) {
 
   const policy = JSON.parse(readFileSync('./config/risk-policy.json', 'utf-8'));
   const recommendations = analysePortfolio({ portfolio, strategies: strategyObjs, market, policy });
-  const best = recommendations.find(r => r.action !== 'BLOCKED') || recommendations[0];
-  const blocked = recommendations.filter(r => r.action === 'BLOCKED');
-
   lines.push('');
   lines.push('🧠 NAVI Portfolio Coach');
   lines.push('');
-  if (best) {
-    const emoji = actionEmoji(best.action, best.riskLevel);
-    lines.push(`${emoji} ${best.action} ${best.strategy}`);
-    lines.push(`Score: ${best.score}/100`);
-    lines.push(`Risk: ${best.riskLevel}`);
+  // Show all strategies with their action
+  for (const r of recommendations) {
+    const rEmoji = r.action === 'BLOCKED' ? '🔴' : r.riskLevel === 'HIGH' ? '🔴' : r.riskLevel === 'MEDIUM' ? '🟡' : '🟢';
+    const rAction = r.action === 'BLOCKED' ? 'AVOID' : r.action;
+    lines.push(`${rEmoji} ${rAction} ${r.strategy}`);
+    lines.push(`Score: ${r.score}/100 | Risk: ${r.riskLevel}`);
+    lines.push(`Reason: ${r.reason}`);
     lines.push('');
-    lines.push('Reason:');
-    lines.push(best.reason);
-  }
-  if (blocked.length > 0) {
-    lines.push('');
-    lines.push('Blocked:');
-    for (const b of blocked) {
-      lines.push(`  ${b.strategy}`);
-      lines.push(`  Reason: ${b.warnings.join('; ') || 'Risk threshold exceeded'}`);
-    }
   }
 
   // ── APY Stability Checks ─────────────────────────────────────────────────
@@ -452,7 +459,7 @@ async function hourlyScan(pools) {
   }
 
   // ── Regime advice (after NAVX price) ───────────────────────────────────
-  const regimeAdvice = REGIME_ADVICE[regime] || REGIME_ADVICE.SIDEWAYS;
+  const regimeAdvice = getRegimeAdvice(regime, depegData);
   lines.push(`💡 ${regimeAdvice}`);
   lines.push("");
   lines.push("💡 *Bot wallet:* `0x772ba512d...`");

@@ -15,7 +15,11 @@ import { suggestPositionSize } from './position-sizing.mjs';
 let _scoreStrategy = null;
 let _assessRisk = null;
 
-export function scoreStrategy({ spread, organicSpread, incentiveApr = 0, navxChange24h = null, navxAvailable = true, depegBps = 0, ltv = 0, stabilityScore = 50 }) {
+function isLSTDebt(symbol) {
+  return ["haSUI", "vSUI", "stSUI"].includes(symbol);
+}
+
+export function scoreStrategy({ spread, organicSpread, incentiveApr = 0, navxChange24h = null, navxAvailable = true, depegBps = 0, ltv = 0, stabilityScore = 50, debt }) {
   let rawScore = 50;
   rawScore += organicSpread * 6;
   rawScore += Math.min(incentiveApr, 5) * 1.5;
@@ -23,8 +27,11 @@ export function scoreStrategy({ spread, organicSpread, incentiveApr = 0, navxCha
   let riskPenalty = 0;
   if (!navxAvailable && incentiveApr > 0) riskPenalty += 20;
   if (navxChange24h !== null && navxChange24h < -8) riskPenalty += 15;
-  if (Math.abs(depegBps) > 50) riskPenalty += 15;
-  if (Math.abs(depegBps) > 100) riskPenalty += 30;
+  // Only penalise depeg for LST debt strategies
+  if (debt && isLSTDebt(debt)) {
+    if (Math.abs(depegBps) > 50) riskPenalty += 15;
+    if (Math.abs(depegBps) > 100) riskPenalty += 30;
+  }
   if (ltv > 0.6) riskPenalty += 15;
   if (ltv > 0.7) riskPenalty += 30;
   rawScore += (stabilityScore - 50) * 0.25;
@@ -36,8 +43,9 @@ export function scoreStrategy({ spread, organicSpread, incentiveApr = 0, navxCha
   };
 }
 
-function assessRisk({ ltv, healthFactor, depegBps, navxChange24h }, policy) {
-  if (_assessRisk) return _assessRisk({ ltv, healthFactor, depegBps, navxChange24h }, policy);
+
+function assessRisk({ ltv, healthFactor, depegBps, navxChange24h, debt }, policy) {
+  if (_assessRisk) return _assessRisk({ ltv, healthFactor, depegBps, navxChange24h, debt }, policy);
   // Inline fallback
   const warnings = [];
   let riskLevel = 'LOW';
@@ -55,7 +63,10 @@ function assessRisk({ ltv, healthFactor, depegBps, navxChange24h }, policy) {
   if (depegBps < -(policy?.depegBlockBps || 100)) {
     blocked = true;
     warnings.push(`Depeg ${Math.abs(depegBps).toFixed(0)}bps exceeds block threshold`);
-  } else if (depegBps > (policy?.depegWarningBps || 50)) {
+  }
+
+  // haSUI premium warning — only for LST debt strategies
+  if (debt && isLSTDebt(debt) && depegBps > (policy?.depegWarningBps || 50)) {
     warnings.push(`haSUI premium ${depegBps.toFixed(0)}bps — avoid LST entry`);
   }
 
@@ -71,11 +82,11 @@ function buildReason(strategy, score, risk) {
   if (risk.blocked) {
     const parts = [`Score ${score}/100`, `Spread ${strategy.spread.toFixed(2)}%`, `Risk ${risk.riskLevel}`];
     const depegBlock = risk.warnings.find(w => w.includes('Depeg'));
-    if (depegBlock) {
+    if (depegBlock && strategy.debt && isLSTDebt(strategy.debt)) {
       parts.push('haSUI depeg detected');
     }
     const premiumWarn = risk.warnings.find(w => w.includes('premium'));
-    if (premiumWarn) {
+    if (premiumWarn && strategy.debt && isLSTDebt(strategy.debt)) {
       parts.push('haSUI premium elevated');
     }
     const hfBlock = risk.warnings.find(w => w.includes('HF'));
@@ -91,7 +102,18 @@ function buildReason(strategy, score, risk) {
     `Organic ${strategy.organicSpread?.toFixed(2) || '0.00'}%`,
     `Risk ${risk.riskLevel}`
   ];
-  if (risk.warnings.length) parts.push(risk.warnings.join('; '));
+  // Add depeg premium reason for LST strategies
+  if (strategy.debt && isLSTDebt(strategy.debt) && depegBps > 50) {
+    parts.push(`haSUI premium ${depegBps.toFixed(0)}bps`);
+  }
+  // Only show LST premium warning for LST debt strategies
+  const filteredWarnings = risk.warnings.filter(w => {
+    if (w.includes('premium') || w.includes('LST')) {
+      return strategy.debt && isLSTDebt(strategy.debt);
+    }
+    return true;
+  });
+  if (filteredWarnings.length) parts.push(filteredWarnings.join('; '));
   return parts.join(' | ');
 }
 
@@ -120,14 +142,23 @@ export function analysePortfolio({ portfolio, strategies, market, policy }) {
       navxChange24h,
       depegBps,
       ltv: s.ltv,
-      stabilityScore: s.stabilityScore || 50
+      stabilityScore: s.stabilityScore || 50,
+      debt: s.debt
     });
 
+    // For stable/stable strategies (same coll and debt), use lower LTV for risk
+    // For directional strategies, use collateral LTV
+    const isStableStable = s.debt === s.coll || ['USDC','USDY'].includes(s.coll);
+    const effectiveLtv = isStableStable
+      ? Math.min(s.ltv, s.debtLtv || s.ltv)
+      : s.ltv;
+
     const risk = assessRisk({
-      ltv: s.ltv,
+      ltv: effectiveLtv,
       healthFactor: s.healthFactor,
       depegBps,
-      navxChange24h
+      navxChange24h,
+      debt: s.debt
     }, pol);
 
     const sizing = suggestPositionSize({

@@ -1,5 +1,5 @@
 {
-  "maxLtv": 0.6,
+  "maxLtv": 0.75,
   "minHealthFactor": 1.8,
   "minCashBuffer": 0.1,
   "maxSingleStrategyWeight": 0.35,
