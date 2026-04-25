@@ -102,26 +102,30 @@ async function getPools() {
 // Debt principal is FIXED in nominal terms (you owe exactly D haSUI/LBTC units).
 // Dollar value of debt changes with price of the debt asset.
 // Borrow cost accrues on the debt principal via continuous compounding.
+
+function formatPct(v, digits = 2) {
+  const sign = v >= 0 ? "+" : "";
+  return `${sign}${v.toFixed(digits)}%`;
+}
+
+function actionEmoji(action, riskLevel) {
+  if (action === "DEPLOY") return "🟢";
+  if (action === "REDUCE") return "🟠";
+  if (action === "EXIT") return "🔴";
+  if (riskLevel === "HIGH") return "🔴";
+  return "⏸️";
+}
+
 // This correctly models NAVI's interest accrual (interest-on-interest avoided).
 function calc30d(supplyApy, borrowApy, ltv, debtPriceChange = 0, lev = 1) {
-  const days = 30;
-  const t = days / 365;
-
-  // Compound collateral (continuous compounding approximation)
-  const collateralFinal = 100 * lev * Math.exp(supplyApy / 100 * t);
-
-  // Fixed debt principal (you owe exactly this much in debt asset units)
-  const debtPrincipal = 100 * lev * ltv;
-
-  // Debt dollar value changes with price of debt asset
-  const debtValue = debtPrincipal * (1 + debtPriceChange);
-
-  // Borrow cost: continuous compounding on debt principal
-  // cost = principal × (e^(rate × t) - 1)
-  const borrowCost = debtPrincipal * (Math.exp(borrowApy / 100 * t) - 1);
-
-  const net = collateralFinal - debtValue - borrowCost;
-  return ((net / (100 * lev)) * 100).toFixed(1);
+  const t = 30 / 365;
+  const collateral = 100 * lev;
+  const debt = 100 * lev * ltv;
+  const supplyGain = collateral * (Math.exp((supplyApy / 100) * t) - 1);
+  const borrowCost = debt * (Math.exp((borrowApy / 100) * t) - 1);
+  const debtPriceCost = debt * debtPriceChange;
+  const netProfit = supplyGain - borrowCost - debtPriceCost;
+  return ((netProfit / 100) * 100).toFixed(2);
 }
 
 // ─── Find best carry pair ────────────────────────────────────────────────────
@@ -287,21 +291,15 @@ async function hourlyScan(pools) {
 
     // Use portfolio action for emoji (from risk-engine)
     const action = getPortfolioAction(walletPosition?.overview.hf, collPool.ltv * strat.lev);
-    const emoji = action.emoji;
-    const stratWeight = weights[strat.name] || 1;
-
-    const netSpread = (collPool.supplyApy - debtPool.borrowApy).toFixed(1);
     const organicSpread = collPool.organicSupplyApy - debtPool.organicBorrowApy;
-    const organicPct = organicSpread >= 0 ? `${organicSpread.toFixed(1)}%` : `${organicSpread.toFixed(1)}%`;
     const incentiveApr = collPool.incentivizedSupplyApr || 0;
-    lines.push(`${emoji} ${strat.name} (${strat.lev}x) w${stratWeight.toFixed(1)}`);
-    lines.push(`   Net Spread: +${netSpread}% (Incentives included)`);
-    lines.push(`   ├─ Organic: ${organicPct}`);
-    if (incentiveApr > 0) {
-      lines.push(`   └─ Incentives: +${incentiveApr.toFixed(2)}% ⚠️`);
-    } else {
-      lines.push(`   └─ Incentives: none`);
-    }
+    const totalSpread = organicSpread + incentiveApr;
+    const stratWeight = weights[strat.name] || 1;
+    const stratEmoji = actionEmoji(action.label, collPool.ltv * strat.lev > 0.65 ? "HIGH" : "LOW");
+    lines.push(`${stratEmoji} ${strat.name} (${strat.lev}x) w${stratWeight.toFixed(1)}`);
+    lines.push(`   Net Spread: ${formatPct(totalSpread)} (Organic + Incentives)`);
+    lines.push(`   ├─ Organic: ${formatPct(organicSpread)}`);
+    lines.push(`   └─ Incentives: ${formatPct(incentiveApr)}${incentiveApr > 0 ? " ⚠️" : ""}`);
     lines.push(`   30D: 🐂 ${bull > 0 ? "+" : ""}${bull}% | 🐻 ${bear > 0 ? "+" : ""}${bear}% | 📊 ${side > 0 ? "+" : ""}${side}%`);
 
     // Liquidation buffer for leveraged strategies
@@ -358,9 +356,8 @@ async function hourlyScan(pools) {
   lines.push('🧠 NAVI Portfolio Coach');
   lines.push('');
   if (best) {
-    lines.push(`Best Action: ${best.action}`);
-    lines.push(`Strategy: ${best.strategy}`);
-    if (best.amountUsd > 0) lines.push(`Amount: $${typeof best.amountUsd === 'number' ? best.amountUsd.toFixed(0) : best.amountUsd}`);
+    const emoji = actionEmoji(best.action, best.riskLevel);
+    lines.push(`${emoji} ${best.action} ${best.strategy}`);
     lines.push(`Score: ${best.score}/100`);
     lines.push(`Risk: ${best.riskLevel}`);
     lines.push('');
@@ -448,8 +445,11 @@ async function hourlyScan(pools) {
   const navxChangeStr = navxPriceData.change24h != null
     ? `${navxPriceData.change24h > 0 ? '+' : ''}${navxPriceData.change24h.toFixed(1)}%`
     : 'n/a';
-  const navxPriceWarning = navxPriceData.price ? '' : ' ⚠️ Incentive yield unconfirmed';
-  lines.push(`NAVX: $${(navxPriceData.price || 0).toFixed(4)} (${navxChangeStr} 24h)${navxPriceWarning}`);
+  if (navxPriceData.price) {
+    lines.push(`NAVX: $${navxPriceData.price.toFixed(4)} (${navxChangeStr} 24h)`);
+  } else {
+    lines.push(`NAVX: unavailable ⚠️ Incentive yield unconfirmed`);
+  }
 
   // ── Regime advice (after NAVX price) ───────────────────────────────────
   const regimeAdvice = REGIME_ADVICE[regime] || REGIME_ADVICE.SIDEWAYS;

@@ -15,14 +15,25 @@ import { suggestPositionSize } from './position-sizing.mjs';
 let _scoreStrategy = null;
 let _assessRisk = null;
 
-function scoreStrategy({ spread, organicSpread, incentiveApr, navxChange24h, depegBps, ltv, stabilityScore }) {
-  if (_scoreStrategy) return _scoreStrategy({ spread, organicSpread, incentiveApr, navxChange24h, depegBps, ltv, stabilityScore });
-  // Inline fallback: simple weighted score
-  const base = spread * 10;
-  const penalty = Math.max(0, ltv - 0.5) * 20;
-  const navxPenalty = navxChange24h < -8 ? 10 : 0;
-  const depegPenalty = depegBps < -50 ? 5 : 0; // penalise only actual depeg (discount), not premium
-  return Math.max(0, Math.min(100, base - penalty - navxPenalty - depegPenalty + (stabilityScore || 0) / 10));
+export function scoreStrategy({ spread, organicSpread, incentiveApr = 0, navxChange24h = null, navxAvailable = true, depegBps = 0, ltv = 0, stabilityScore = 50 }) {
+  let rawScore = 50;
+  rawScore += organicSpread * 6;
+  rawScore += Math.min(incentiveApr, 5) * 1.5;
+  rawScore += spread * 2;
+  let riskPenalty = 0;
+  if (!navxAvailable && incentiveApr > 0) riskPenalty += 20;
+  if (navxChange24h !== null && navxChange24h < -8) riskPenalty += 15;
+  if (Math.abs(depegBps) > 50) riskPenalty += 15;
+  if (Math.abs(depegBps) > 100) riskPenalty += 30;
+  if (ltv > 0.6) riskPenalty += 15;
+  if (ltv > 0.7) riskPenalty += 30;
+  rawScore += (stabilityScore - 50) * 0.25;
+  const finalScore = rawScore - riskPenalty;
+  return {
+    rawScore: Math.max(0, Math.min(100, Math.round(rawScore))),
+    riskPenalty,
+    finalScore: Math.max(0, Math.min(100, Math.round(finalScore)))
+  };
 }
 
 function assessRisk({ ltv, healthFactor, depegBps, navxChange24h }, policy) {
@@ -102,7 +113,7 @@ export function analysePortfolio({ portfolio, strategies, market, policy }) {
   const navxChange24h = market?.navx?.change24h || 0;
 
   const recommendations = (strategies || []).map((s) => {
-    const score = scoreStrategy({
+    const { finalScore, riskPenalty } = scoreStrategy({
       spread: s.spread,
       organicSpread: s.organicSpread,
       incentiveApr: s.incentiveApr || 0,
@@ -120,7 +131,7 @@ export function analysePortfolio({ portfolio, strategies, market, policy }) {
     }, pol);
 
     const sizing = suggestPositionSize({
-      score,
+      score: finalScore,
       riskLevel: risk.riskLevel,
       totalCapital,
       cashAvailable
@@ -128,12 +139,12 @@ export function analysePortfolio({ portfolio, strategies, market, policy }) {
 
     return {
       strategy: s.name,
-      score,
+      score: finalScore,
       riskLevel: risk.riskLevel,
       action: risk.blocked ? 'BLOCKED' : sizing.action,
       amountUsd: risk.blocked ? 0 : sizing.amountUsd,
       warnings: risk.warnings,
-      reason: buildReason(s, score, risk)
+      reason: buildReason(s, finalScore, risk)
     };
   });
 
