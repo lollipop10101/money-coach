@@ -187,7 +187,7 @@ async function sendAlert(message) {
     );
     return true;
   } catch (e) {
-    console.error("Telegram error:", e.message);
+    console.error("[Telegram] Error:", e.message);
     return false;
   }
 }
