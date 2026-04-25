@@ -102,10 +102,6 @@ function buildReason(strategy, score, risk) {
     `Organic ${strategy.organicSpread?.toFixed(2) || '0.00'}%`,
     `Risk ${risk.riskLevel}`
   ];
-  // Add depeg premium reason for LST strategies
-  if (strategy.debt && isLSTDebt(strategy.debt) && depegBps > 50) {
-    parts.push(`haSUI premium ${depegBps.toFixed(0)}bps`);
-  }
   // Only show LST premium warning for LST debt strategies
   const filteredWarnings = risk.warnings.filter(w => {
     if (w.includes('premium') || w.includes('LST')) {
