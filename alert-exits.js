@@ -47,15 +47,16 @@ export async function checkExitConditions(pool, thresholds = {}) {
     }
   }
 
-  // 3. haSUI depeg
+  // 3. haSUI depeg — only exit on actual depeg (discount). Premium = warning only.
   const lstStatus = await getLSTDepegStatus();
   if (lstStatus && lstStatus.ratio !== undefined) {
-    const depeg = Math.abs(1 - lstStatus.ratio) * 100;
-    if (depeg > depegThreshold) {
+    const ratio = lstStatus.ratio;
+    const discount = (1 - ratio) * 100;
+    if (ratio < 1 && discount > depegThreshold) {
       alerts.push({
         type: 'LST_DEPEG',
         severity: 'HIGH',
-        message: `haSUI depeg: ${depeg.toFixed(2)}% (threshold: ${depegThreshold}%)`,
+        message: `haSUI depeg: ${discount.toFixed(2)}% (threshold: ${depegThreshold}%)`,
         action: 'EXIT_HASUI_POSITION',
       });
     }
