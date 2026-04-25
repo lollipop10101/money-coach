@@ -319,13 +319,6 @@ async function hourlyScan(pools) {
     lines.push(`   └─ Incentives: ${formatPct(incentiveApr)}${incentiveApr > 0 ? " ⚠️" : ""}`);
     lines.push(`   30D: 🐂 ${bull > 0 ? "+" : ""}${bull}% | 🐻 ${bear > 0 ? "+" : ""}${bear}% | 📊 ${side > 0 ? "+" : ""}${side}%`);
 
-    // Liquidation buffer for leveraged strategies
-    if (strat.lev > 1) {
-      const buf = calcLiqBuffer(collPool.ltv);
-      if (buf != null) {
-        lines.push(`   ⚠️ LIQUIDATION BUFFER: +${buf.toFixed(1)}% (${riskTier.tier})`);
-      }
-    }
     if (hfTier) {
       lines.push(`   💼 HF Tier: ${hfTier}`);
     }
