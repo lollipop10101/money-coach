@@ -133,7 +133,12 @@ function formatDate(date) {
   return `${day} ${month} ${d.getFullYear()}, ${h}:${m}`;
 }
 
-function buildStrategyReason({ organicSpread, incentiveApr, depegBps, debt, riskLevel }) {
+function buildStrategyReason({ name, organicSpread, incentiveApr, depegBps, debt, riskLevel }) {
+  // Special case: USDC→USDC is self-pair, incentive-only — no organic yield possible
+  if (name === 'USDC→USDC') {
+    if (riskLevel === 'HIGH') return 'incentive-only yield, weak real organic return.';
+    return 'USDC self-pair, no organic spread.';
+  }
   if (riskLevel === 'HIGH') {
     if (['haSUI', 'vSUI', 'stSUI'].includes(debt) && depegBps > 50) {
       return `haSUI premium ${depegBps}bps, bad LST entry.`;
@@ -316,7 +321,7 @@ async function buildCoachAlert(pools) {
     let riskLevel = 'LOW';
     if (['haSUI', 'vSUI', 'stSUI'].includes(strat.debt) && depegBps > 50) riskLevel = 'HIGH';
     else if (['LBTC', 'BTC', 'SUI'].includes(strat.debt)) riskLevel = 'HIGH';
-    else if (organicSpread <= 0 && incentiveApr > 0) riskLevel = 'MEDIUM';
+    else if (organicSpread <= 0 && incentiveApr > 0) riskLevel = 'HIGH';
     else if (strat.name === 'USDY→USDC' && organicSpread > 0) riskLevel = 'MEDIUM';
     else if (effectiveLtv > 0.75) riskLevel = 'HIGH';
     else if (effectiveLtv > 0.60) riskLevel = 'MEDIUM';
@@ -383,6 +388,7 @@ async function buildCoachAlert(pools) {
   const best = strategyObjs[0];
   const bestAction = actionLabel(best.score, best.riskLevel);
   const bestReason = buildStrategyReason({
+    name: best.name,
     organicSpread: best.organicSpread,
     incentiveApr: best.incentiveApr,
     depegBps: best.depegBps,
@@ -411,6 +417,7 @@ async function buildCoachAlert(pools) {
     const s = strategyObjs[i];
     const action = actionLabel(s.score, s.riskLevel);
     const reason = buildStrategyReason({
+      name: s.name,
       organicSpread: s.organicSpread,
       incentiveApr: s.incentiveApr,
       depegBps: s.depegBps,
