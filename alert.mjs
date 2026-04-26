@@ -108,26 +108,63 @@ function formatPct(v, digits = 2) {
   return `${sign}${v.toFixed(digits)}%`;
 }
 
-function isLSTDebt(symbol) {
-  return ["haSUI", "vSUI", "stSUI"].includes(symbol);
+function formatConfidence(confidence) {
+  if (confidence <= 30) return 'LOW';
+  if (confidence <= 70) return 'MEDIUM';
+  return 'HIGH';
 }
 
-function isDirectionalDebt(symbol) {
-  return ["haSUI", "vSUI", "stSUI", "LBTC", "BTC", "SUI"].includes(symbol);
+function actionLabel(score, riskLevel) {
+  if (riskLevel === 'HIGH') return { label: 'AVOID', emoji: '🔴' };
+  if (score >= 80 && riskLevel === 'LOW') return { label: 'DEPLOY', emoji: '🟢' };
+  if (score >= 65 && riskLevel === 'MEDIUM') return { label: 'MONITOR', emoji: '🟡' };
+  if (riskLevel === 'MEDIUM') return { label: 'MONITOR', emoji: '🟡' };
+  if (score < 65) return { label: 'WAIT', emoji: '⏸️' };
+  return { label: 'WAIT', emoji: '⏸️' };
 }
 
-function actionEmoji(action, riskLevel) {
-  if (action === "DEPLOY") return "🟢";
-  if (action === "WAIT") return "⏸️";
-  if (riskLevel === "HIGH") return "🔴";
-  return "🟡";
+function formatDate(date) {
+  const d = new Date(date);
+  const day = String(d.getDate()).padStart(2, '0');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const month = months[d.getMonth()];
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${day} ${month} ${d.getFullYear()}, ${h}:${m}`;
 }
 
-function getRegimeAdvice(regime, depegData) {
-  if (depegData?.status === "premium" && depegData?.premium_bps > 50) {
-    return "BEAR regime, but haSUI premium is too high. Avoid LST borrow entries.";
+function buildStrategyReason({ organicSpread, incentiveApr, depegBps, debt, riskLevel }) {
+  if (riskLevel === 'HIGH') {
+    if (['haSUI', 'vSUI', 'stSUI'].includes(debt) && depegBps > 50) {
+      return `haSUI premium ${depegBps}bps, bad LST entry.`;
+    }
+    if (['LBTC', 'BTC', 'SUI'].includes(debt)) {
+      return 'directional debt exposure.';
+    }
+    if (organicSpread <= 0 && incentiveApr > 0) {
+      return 'incentive-only yield, weak real organic return.';
+    }
+    return 'risk threshold exceeded.';
   }
-  return REGIME_ADVICE[regime] || REGIME_ADVICE.SIDEWAYS;
+  if (organicSpread > 0 && incentiveApr > organicSpread * 0.5) {
+    return 'Good spread, but still partly incentive-driven.';
+  }
+  if (organicSpread > 0) {
+    return 'Strong organic spread, sustainable yield.';
+  }
+  return 'Monitor for spread compression.';
+}
+
+function getRegimeAdvice(regime, depegBps) {
+  if (depegBps > 50) {
+    return 'BEAR regime, but haSUI premium is too high. Avoid LST borrow entries.';
+  }
+  const advice = {
+    BULL: 'Bull regime — consider leveraged long positions. Watch for liquidation zones.',
+    BEAR: 'Bear regime — depeg risk elevated. Reduce LST exposure.',
+    SIDEWAYS: 'Sideways regime — focus on stable carry. Avoid directional bets.'
+  };
+  return advice[regime] || advice.SIDEWAYS;
 }
 
 // This correctly models NAVI's interest accrual (interest-on-interest avoided).
@@ -230,8 +267,8 @@ function saveState(pools) {
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
-// ─── Main scan (hourly) ─────────────────────────────────────────────────────
-async function hourlyScan(pools) {
+// ─── Build single NAVI Money Coach alert ─────────────────────────────────────
+async function buildCoachAlert(pools) {
   // ── Regime prediction ──────────────────────────────────────────────────
   let regime = 'SIDEWAYS';
   let regimeConfidence = 50;
@@ -244,7 +281,19 @@ async function hourlyScan(pools) {
     console.error('[REGIME] Prediction failed:', e.message);
   }
 
-  // Regime-aware strategy weights
+  // ── Market data ───────────────────────────────────────────────────────────
+  const navxPriceData = await getNAVXPrice().catch(() => ({ price: null, change24h: null }));
+  const depegData = await getLSTDepegStatus().catch(() => ({ ratio: 1, status: 'unknown', premium_bps: 0 }));
+  const depegBps = depegData?.premium_bps || 0;
+
+  // ── Wallet position (if configured) ───────────────────────────────────────
+  const walletAddress = process.env.WALLET_ADDRESS;
+  let walletPosition = null;
+  if (walletAddress) {
+    walletPosition = await getWalletPosition(walletAddress).catch(() => null);
+  }
+
+  // ── Regime-aware strategy weights ──────────────────────────────────────────
   const regimeWeights = {
     BULL:     { 'USDC→LBTC': 2.0, 'USDC→haSUI': 1.5, 'USDY→USDC': 1.0, 'USDC→USDC': 0.5 },
     BEAR:     { 'USDY→USDC': 2.0, 'USDC→USDC': 1.5, 'USDC→haSUI': 1.0, 'USDC→LBTC': 0.3 },
@@ -252,223 +301,192 @@ async function hourlyScan(pools) {
   };
   const weights = regimeWeights[regime] || regimeWeights.SIDEWAYS;
 
-  // ── Wallet position (if configured) ─────────────────────────────────
-  const walletAddress = process.env.WALLET_ADDRESS;
-  let walletPosition = null;
-  if (walletAddress) {
-    walletPosition = await getWalletPosition(walletAddress).catch(() => null);
-  }
-
-  // ── Market data for scoring ─────────────────────────────────────────────
-  const navxPriceData = await getNAVXPrice().catch(() => ({ price: null, change24h: null }));
-  const depegData = await getLSTDepegStatus().catch(() => ({ ratio: 1, status: 'unknown', premium_bps: 0 }));
-  const marketData = {
-    navxPrice: navxPriceData?.price,
-    navxChange24h: navxPriceData?.change24h,
-    navxPriceConfirmed: !!navxPriceData?.price,
-    hasuiSuiRatio: depegData?.ratio,
-  };
-
-  // Sort strategies by regime weight (highest first)
-  const sortedStrategies = [...STRATEGIES].sort((a, b) => (weights[b.name] || 1) - (weights[a.name] || 1));
-
-  // Build strategy-keyed pool map for scoring
-  const poolMap = new Map(sortedStrategies.map(strat => {
+  // ── Build strategy objects with full metrics ───────────────────────────────
+  const strategyObjs = STRATEGIES.map(strat => {
     const collPool = pools.find((p) => p.symbol === strat.coll);
     const debtPool = pools.find((p) => p.symbol === strat.debt);
-    return [strat.name, { ...collPool, debtPool }];
-  }));
+    if (!collPool || !debtPool) return null;
 
-  const time = new Date().toLocaleString();
-  const lines = [];
-
-  lines.push(`🔍 *Hourly NAVI Scan* [${regime} ${regimeConfidence}%]`);
-  lines.push(`_${time}_`);
-  lines.push("");
-
-  let foundOpportunity = false;
-
-  for (const strat of sortedStrategies) {
-    const collPool = pools.find((p) => p.symbol === strat.coll);
-    const debtPool = pools.find((p) => p.symbol === strat.debt);
-    if (!collPool || !debtPool) continue;
-
-    const bull = parseFloat(calc30d(collPool.supplyApy, debtPool.borrowApy, collPool.ltv, strat.debtAsset ? 0.30 : 0, strat.lev));
-    const bear = parseFloat(calc30d(collPool.supplyApy, debtPool.borrowApy, collPool.ltv, strat.debtAsset ? -0.30 : 0, strat.lev));
-    const side = parseFloat(calc30d(collPool.supplyApy, debtPool.borrowApy, collPool.ltv, strat.debtAsset ? 0.02 : 0, strat.lev));
-    const spread = collPool.supplyApy - debtPool.borrowApy;
-
-    // Add risk tier from risk-engine
-    const riskTier = checkStrategyRisk(collPool.ltv, strat.debtPrice, 1, strat.lev);
-    const liqBuffer = calcLiqBuffer(collPool.ltv * strat.lev);
-    const hfTier = walletPosition ? getHFTier(walletPosition.overview.hf) : null;
-
-    // Use portfolio action for emoji (from risk-engine)
-    const action = getPortfolioAction(walletPosition?.overview.hf, collPool.ltv * strat.lev);
     const organicSpread = collPool.organicSupplyApy - debtPool.organicBorrowApy;
-    const incentiveApr = collPool.incentivizedSupplyApr || 0;
-    const totalSpread = organicSpread + incentiveApr;
-    const stratWeight = weights[strat.name] || 1;
-    const effectiveLtv = collPool.ltv * strat.lev;
-    const stratRisk = effectiveLtv > 0.75 ? "HIGH" : effectiveLtv > 0.60 ? "MEDIUM" : "LOW";
-    const stratAction = stratRisk === "HIGH" ? "AVOID" : stratRisk === "MEDIUM" ? "MONITOR" : "MONITOR";
-    const stratEmoji = stratRisk === "HIGH" ? "🔴" : stratRisk === "MEDIUM" ? "🟡" : "🟢";
-    lines.push(`${stratEmoji} ${stratAction} ${strat.name} (${strat.lev}x) w${stratWeight.toFixed(1)}`);
-    lines.push(`   Net Spread: ${formatPct(totalSpread)} (Organic + Incentives)`);
-    lines.push(`   ├─ Organic: ${formatPct(organicSpread)}`);
-    lines.push(`   └─ Incentives: ${formatPct(incentiveApr)}${incentiveApr > 0 ? " ⚠️" : ""}`);
-    lines.push(`   30D: 🐂 ${bull > 0 ? "+" : ""}${bull}% | 🐻 ${bear > 0 ? "+" : ""}${bear}% | 📊 ${side > 0 ? "+" : ""}${side}%`);
+    const incentiveApr  = collPool.incentivizedSupplyApr || 0;
+    const netSpread     = organicSpread + incentiveApr;
+    const effectiveLtv  = collPool.ltv * strat.lev;
 
-    if (hfTier) {
-      lines.push(`   💼 HF Tier: ${hfTier}`);
-    }
-    lines.push("");
+    // Risk classification for alert builder
+    let riskLevel = 'LOW';
+    if (['haSUI', 'vSUI', 'stSUI'].includes(strat.debt) && depegBps > 50) riskLevel = 'HIGH';
+    else if (['LBTC', 'BTC', 'SUI'].includes(strat.debt)) riskLevel = 'HIGH';
+    else if (organicSpread <= 0 && incentiveApr > 0) riskLevel = 'MEDIUM';
+    else if (strat.name === 'USDY→USDC' && organicSpread > 0) riskLevel = 'MEDIUM';
+    else if (effectiveLtv > 0.75) riskLevel = 'HIGH';
+    else if (effectiveLtv > 0.60) riskLevel = 'MEDIUM';
 
-    // Alert if spread > 2% OR if 30D return > 10% in any scenario, weighted by regime
-    if ((spread > 2 && stratWeight >= 1.0) || Math.abs(bull) > 10 || Math.abs(bear) > 10) {
-      foundOpportunity = true;
-    }
-  }
+    // 30D scenarios
+    const bull30d = parseFloat(calc30d(collPool.supplyApy, debtPool.borrowApy, collPool.ltv, strat.debtAsset ? 0.30 : 0, strat.lev));
+    const bear30d = parseFloat(calc30d(collPool.supplyApy, debtPool.borrowApy, collPool.ltv, strat.debtAsset ? -0.30 : 0, strat.lev));
+    const side30d = parseFloat(calc30d(collPool.supplyApy, debtPool.borrowApy, collPool.ltv, strat.debtAsset ? 0.02 : 0, strat.lev));
 
-  // ── Coach Mode — ranked strategies with reasoning ─────────────────────
-  // Build strategy objects for portfolio engine
-  const strategyObjs = sortedStrategies.map(strat => {
-    const pool = poolMap.get(strat.name);
-    const spread = pool ? (pool.supplyApy || 0) - (pool.borrowPool?.borrowApy || 0) : 0;
-    const organicSpread = pool ? (pool.organicSupplyApy || 0) - (pool.organicBorrowApy || 0) : 0;
     return {
       name: strat.name,
       debt: strat.debt,
-      spread,
+      coll: strat.coll,
+      lev: strat.lev,
+      debtAsset: strat.debtAsset || false,
       organicSpread,
-      incentiveApr: pool?.incentivizedSupplyApr || 0,
-      ltv: pool?.ltv || 0,
-      healthFactor: walletPosition?.overview?.hf || null,
-      stabilityScore: 50,
+      incentiveApr,
+      netSpread,
+      bull30d,
+      bear30d,
+      side30d,
+      riskLevel,
+      depegBps,
+      score: 50, // placeholder, filled below
     };
+  }).filter(Boolean);
+
+  // Score each strategy
+  for (const s of strategyObjs) {
+    const market = { depeg: { status: depegData?.status, premium_bps: depegBps }, navx: { change24h: navxPriceData?.change24h || 0 } };
+    const portfolio = { cash: { USDC: 0, SUI: 0 }, positions: [] };
+    const policy = JSON.parse(readFileSync('./config/risk-policy.json', 'utf-8'));
+    const { scoreStrategy } = await import('./engines/portfolio-engine.mjs');
+    const scored = scoreStrategy({
+      spread: s.netSpread,
+      organicSpread: s.organicSpread,
+      incentiveApr: s.incentiveApr,
+      navxChange24h: navxPriceData?.change24h || null,
+      navxAvailable: !!navxPriceData?.price,
+      depegBps: s.depegBps,
+      ltv: s.organicSpread > 0 ? s.organicSpread / (s.organicSpread + s.incentiveApr + 0.001) : 0.5,
+      stabilityScore: 50,
+      debt: s.debt,
+    });
+    s.score = scored.finalScore;
+  }
+
+  // Sort by score descending
+  strategyObjs.sort((a, b) => b.score - a.score);
+
+  // ── Build output lines ─────────────────────────────────────────────────────
+  const lines = [];
+  const now = new Date();
+  const conf = formatConfidence(regimeConfidence);
+  const timeStr = formatDate(now);
+
+  lines.push('🧠 NAVI Money Coach');
+  lines.push(`Market: ${regime} | Confidence: ${conf}`);
+  lines.push(`Time: ${timeStr}`);
+  lines.push('');
+  lines.push('━━━━━━━━━━━━━━━━━━');
+
+  // Best action (top strategy)
+  const best = strategyObjs[0];
+  const bestAction = actionLabel(best.score, best.riskLevel);
+  const bestReason = buildStrategyReason({
+    organicSpread: best.organicSpread,
+    incentiveApr: best.incentiveApr,
+    depegBps: best.depegBps,
+    debt: best.debt,
+    riskLevel: best.riskLevel,
   });
+  const side30d = parseFloat(calc30d(
+    pools.find(p => p.symbol === best.coll)?.supplyApy || 0,
+    pools.find(p => p.symbol === best.debt)?.borrowApy || 0,
+    pools.find(p => p.symbol === best.coll)?.ltv || 0,
+    best.debtAsset ? 0.02 : 0,
+    best.lev
+  ));
 
-  const market = {
-    depeg: { status: depegData?.status || 'unknown', premium_bps: depegData?.premium_bps || 0 },
-    navx: { change24h: navxPriceData?.change24h || 0 }
-  };
-
-  const portfolio = {
-    cash: { USDC: 0, SUI: 0 },
-    positions: [],
-  };
-
-  const policy = JSON.parse(readFileSync('./config/risk-policy.json', 'utf-8'));
-  const recommendations = analysePortfolio({ portfolio, strategies: strategyObjs, market, policy });
+  lines.push('🏆 BEST ACTION');
+  lines.push(`${bestAction.emoji} ${bestAction.label} — ${best.name}`);
+  lines.push(`Score: ${best.score}/100 | Risk: ${best.riskLevel}`);
+  lines.push(`Expected 30D: ${formatPct(side30d)}`);
+  lines.push(`Reason: ${bestReason}`);
   lines.push('');
-  lines.push('🧠 NAVI Portfolio Coach');
+  lines.push('━━━━━━━━━━━━━━━━━━');
+  lines.push('📊 STRATEGY RANKING');
   lines.push('');
-  // Show all strategies with their action
-  for (const r of recommendations) {
-    const rEmoji = r.action === 'BLOCKED' ? '🔴' : r.riskLevel === 'HIGH' ? '🔴' : r.riskLevel === 'MEDIUM' ? '🟡' : '🟢';
-    const rAction = r.action === 'BLOCKED' ? 'AVOID' : r.action;
-    lines.push(`${rEmoji} ${rAction} ${r.strategy}`);
-    lines.push(`Score: ${r.score}/100 | Risk: ${r.riskLevel}`);
-    lines.push(`Reason: ${r.reason}`);
+
+  for (let i = 0; i < strategyObjs.length; i++) {
+    const s = strategyObjs[i];
+    const action = actionLabel(s.score, s.riskLevel);
+    const reason = buildStrategyReason({
+      organicSpread: s.organicSpread,
+      incentiveApr: s.incentiveApr,
+      depegBps: s.depegBps,
+      debt: s.debt,
+      riskLevel: s.riskLevel,
+    });
+
+    lines.push(`${i + 1}) ${action.emoji} ${s.name}`);
+    lines.push(`Action: ${action.label}`);
+    lines.push(`Score: ${s.score} | Risk: ${s.riskLevel}`);
+    lines.push(`Net Spread: ${formatPct(s.netSpread)}`);
+    lines.push(`├─ Organic: ${formatPct(s.organicSpread)}`);
+    lines.push(`└─ Incentives: ${formatPct(s.incentiveApr)}`);
+
+    if (s.debtAsset) {
+      lines.push(`30D: Bear ${formatPct(s.bear30d)} / Bull ${formatPct(s.bull30d)}`);
+      lines.push(`Reason: ${reason}`);
+    } else {
+      lines.push(`30D: ${formatPct(s.side30d)}`);
+      if (reason) lines.push(`Reason: ${reason}`);
+    }
     lines.push('');
   }
 
-  // ── APY Stability Checks ─────────────────────────────────────────────────
-  const stabilityChecks = [];
-  for (const strat of sortedStrategies) {
-    const pool = poolMap.get(strat.name);
-    if (!pool) continue;
-    const avg = get7dAvg(strat.coll);
-    if (avg && avg.avg_net != null) {
-      const current = pool.netSpread || 0;
-      const deviation = Math.abs(current - avg.avg_net) / Math.abs(avg.avg_net);
-      if (deviation > 0.3) { // 30% deviation = unstable
-        stabilityChecks.push({
-          symbol: strat.coll,
-          current: (current * 100).toFixed(3),
-          avg7d: (avg.avg_net * 100).toFixed(2),
-          stability: 'LOW',
-        });
-      }
+  lines.push('━━━━━━━━━━━━━━━━━━');
+  lines.push('⚠️ RISK ALERTS');
+  lines.push('');
+
+  // haSUI premium alert
+  if (depegData?.ratio) {
+    const ratioStr = depegData.ratio.toFixed(4);
+    const statusStr = depegData.status === 'premium'
+      ? `PREMIUM +${(depegBps / 100).toFixed(2)}%`
+      : depegData.status === 'discount'
+      ? `DISCOUNT -${(depegBps / 100).toFixed(2)}%`
+      : 'OK';
+    lines.push(`💎 haSUI/SUI: ${ratioStr}`);
+    lines.push(`Status: ${statusStr}`);
+    if (depegData.status === 'premium' && depegBps > 50) {
+      lines.push('Action: Avoid haSUI borrow entries.');
     }
-  }
-  if (stabilityChecks.length > 0) {
     lines.push('');
-    lines.push('─── APY STABILITY ───');
-    for (const s of stabilityChecks) {
-      lines.push(`⚠️ ${s.symbol}: current ${s.current}% vs 7D avg ${s.avg7d}% (${s.stability})`);
-    }
   }
 
-  // ── Exit / Rebalance Alerts ──────────────────────────────────────────────
-  const exitAlerts = [];
-  for (const strat of sortedStrategies) {
-    const pool = poolMap.get(strat.name);
-    if (!pool) continue;
-    const exits = await checkExitConditions({ symbol: strat.coll, netSpread: pool.netSpread, borrowApy: pool.borrowPool?.borrowApy });
-    exitAlerts.push(...exits.map(e => ({ ...e, symbol: strat.coll })));
-  }
-  if (exitAlerts.length > 0) {
-    lines.push('');
-    lines.push('─── EXIT ALERTS ───');
-    for (const a of exitAlerts) {
-      lines.push(`🔴 ${a.type}: ${a.message}`);
-      lines.push(`   → ${a.action}`);
-    }
-  }
-
-  // ── LST Depeg Block ─────────────────────────────────────────────────────
-  if (depegData.status !== 'par' && depegData.status !== 'unknown') {
-    const ratio = depegData.ratio || 1;
-    const bps = depegData.premium_bps || 0;
-    const bpsPct = (bps / 100).toFixed(2);
-    let statusLabel, entrySignal;
-    if (depegData.status === 'discount') {
-      statusLabel = `DISCOUNT -${bpsPct}%`;
-      if (bps > 50) {
-        entrySignal = "✅ BONUS ENTRY — haSUI depegged";
-      }
-    } else if (depegData.status === 'premium') {
-      statusLabel = `PREMIUM +${bpsPct}%`;
-      if (bps > 50) {
-        entrySignal = "⚠️ AVOID LST entry — premium";
-      }
-    }
-    if (statusLabel) {
-      lines.push(`💎 haSUI/SUI Ratio: ${ratio.toFixed(4)} (${statusLabel})`);
-      if (entrySignal) lines.push(`   ${entrySignal}`);
-      lines.push("");
-    }
-  }
-
-  // ── NAVX price inline (reuse from marketData fetch) ───────────────────
-  const navxChangeStr = navxPriceData.change24h != null
+  // NAVX
+  const navxChangeStr = navxPriceData?.change24h != null
     ? `${navxPriceData.change24h > 0 ? '+' : ''}${navxPriceData.change24h.toFixed(1)}%`
     : 'n/a';
-  if (navxPriceData.price) {
+  if (navxPriceData?.price) {
     lines.push(`NAVX: $${navxPriceData.price.toFixed(4)} (${navxChangeStr} 24h)`);
+    lines.push('Status: OK');
   } else {
-    lines.push(`NAVX: unavailable ⚠️ Incentive yield unconfirmed`);
+    lines.push('NAVX: unavailable');
+    lines.push('Status: ⚠️');
   }
 
-  // ── Regime advice (after NAVX price) ───────────────────────────────────
-  const regimeAdvice = getRegimeAdvice(regime, depegData);
-  lines.push(`💡 ${regimeAdvice}`);
-  lines.push("");
-  lines.push("💡 *Bot wallet:* `0x772ba512d...`");
-  lines.push("_\"H\" = hold | \"D\" = deploy_");
+  lines.push('');
+  lines.push('━━━━━━━━━━━━━━━━━━');
+  lines.push('💡 COACH NOTE');
 
-  const msg = lines.join("\n");
-
-  // Only send if there's a real opportunity
-  if (foundOpportunity) {
-    const sent = await sendAlert(msg);
-    if (sent) log("Alert sent", "ALERT");
-  } else {
-    log("Scan complete - no opportunity", "SCAN");
+  const regimeAdvice = getRegimeAdvice(regime, depegBps);
+  lines.push(`${regimeAdvice}`);
+  lines.push(`Best move: keep dry powder and monitor ${best.name}.`);
+  if (depegBps > 50) {
+    lines.push('Avoid LST/directional borrow trades until haSUI premium normalizes.');
   }
 
-  console.log(msg.replace(/[*_`]/g, ""));
+  return lines.join('\n');
+}
+
+// ─── Main scan (hourly) ─────────────────────────────────────────────────────
+async function hourlyScan(pools) {
+  const msg = await buildCoachAlert(pools);
+  const sent = await sendAlert(msg);
+  if (sent) log("Alert sent", "ALERT");
+  console.log(msg.replace(/[*_`]/g, ''));
 }
 
 // ─── Full scan (every 12 hours) ───────────────────────────────────────────────
