@@ -151,8 +151,8 @@ function buildStrategyReason({ name, organicSpread, incentiveApr, depegBps, debt
     }
     return 'risk threshold exceeded.';
   }
-  if (organicSpread > 0 && incentiveApr > organicSpread * 0.5) {
-    return 'Good spread, but still partly incentive-driven.';
+  if (organicSpread > 0 && incentiveApr > organicSpread) {
+    return 'Mostly incentive-driven, organic component small.';
   }
   if (organicSpread > 0) {
     return 'Strong organic spread, sustainable yield.';
