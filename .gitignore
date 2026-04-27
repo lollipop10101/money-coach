@@ -26,3 +26,4 @@ Thumbs.db
 alert.pid
 # Wallet config (do not commit secrets)
 config/wallet.json
+logs/state.json
