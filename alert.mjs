@@ -118,9 +118,26 @@ function actionLabel(score, riskLevel) {
   if (riskLevel === 'HIGH') return { label: 'AVOID', emoji: '🔴' };
   if (score >= 80 && riskLevel === 'LOW') return { label: 'DEPLOY', emoji: '🟢' };
   if (score >= 60 && riskLevel === 'MEDIUM') return { label: 'MONITOR', emoji: '🟡' };
-  if (riskLevel === 'MEDIUM') return { label: 'MONITOR', emoji: '🟡' };
-  if (score < 60) return { label: 'WAIT', emoji: '⏸️' };
+  if (score >= 65 && riskLevel === 'LOW') return { label: 'MONITOR', emoji: '🟡' };
   return { label: 'WAIT', emoji: '⏸️' };
+}
+
+
+function getWhyNotDeploy(score, riskLevel, incentiveApr, confidence) {
+  const reasons = [];
+  if (score < 80) {
+    reasons.push(`Score ${score} is below deploy threshold 80`);
+  }
+  if (riskLevel !== 'LOW') {
+    reasons.push(`Risk is ${riskLevel}; deploy requires LOW risk`);
+  }
+  if (incentiveApr > 0) {
+    reasons.push('Yield is partly incentive-driven');
+  }
+  if (confidence !== 'MEDIUM' && confidence !== 'HIGH') {
+    reasons.push(`Market confidence is ${confidence}`);
+  }
+  return reasons;
 }
 
 function formatDate(date) {
@@ -622,14 +639,14 @@ async function buildCompactCoachAlert(pools) {
   }
   lines.push('');
 
-  // Why not deploy / trigger (when best score < 80)
-  if (best.score < 80) {
+  // Why not deploy / Deploy trigger
+  if (best.score < 80 || best.riskLevel !== 'LOW') {
+    const reasons = getWhyNotDeploy(best.score, best.riskLevel, best.incentiveApr, formatConfidence(regimeConfidence));
     lines.push('Why not deploy:');
-    lines.push(`• Score ${best.score} — below 80 threshold`);
-    lines.push('• Yield partly incentive-driven');
+    for (const r of reasons) lines.push(`• ${r}`);
     lines.push('');
     lines.push('Deploy trigger:');
-    lines.push('• Score > 80');
+    lines.push('• Score ≥ 80 AND Risk LOW');
     lines.push('• NAVX stable (not dropping)');
     lines.push('• haSUI premium < 1%');
     lines.push('• Confidence MED/HIGH');
@@ -637,10 +654,11 @@ async function buildCompactCoachAlert(pools) {
   }
 
   // Action recommendation
-  const actionText = best.score >= 80
+  const { label: action } = actionLabel(best.score, best.riskLevel);
+  const actionText = action === 'DEPLOY'
     ? 'ready to deploy.'
-    : best.score >= 60 && best.riskLevel === 'MEDIUM'
-    ? 'wait for better confirmation.'
+    : action === 'MONITOR'
+    ? 'keep watching — conditions not fully met.'
     : 'not recommended right now.';
   lines.push(`Action: ${actionText}`);
 

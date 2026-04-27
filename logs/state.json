@@ -1,9 +1,9 @@
 {
-  "lastAlert": "2026-04-27T00:18:51.310Z",
+  "lastAlert": "2026-04-27T00:29:16.678Z",
   "lastFullScan": "2026-04-26T15:17:14.107Z",
   "previousRates": {
     "USDSUI": {
-      "supplyApy": 6.275,
+      "supplyApy": 6.261,
       "borrowApy": 3.54
     },
     "suiUSDe": {
@@ -15,7 +15,7 @@
       "borrowApy": 0.473
     },
     "XAUm": {
-      "supplyApy": 4.953,
+      "supplyApy": 4.936,
       "borrowApy": 8.032
     },
     "YBTC.B": {
@@ -47,7 +47,7 @@
       "borrowApy": 13.358
     },
     "LBTC": {
-      "supplyApy": 1.728,
+      "supplyApy": 1.727,
       "borrowApy": 0.291
     },
     "SOL": {
@@ -63,8 +63,8 @@
       "borrowApy": 1.691
     },
     "suiUSDT": {
-      "supplyApy": 4.057,
-      "borrowApy": 3.769
+      "supplyApy": 4.056,
+      "borrowApy": 3.773
     },
     "BUCK": {
       "supplyApy": 0.122,
@@ -87,11 +87,11 @@
       "borrowApy": 0.255
     },
     "NS": {
-      "supplyApy": 18.829,
+      "supplyApy": 18.79,
       "borrowApy": 11.639
     },
     "USDY": {
-      "supplyApy": 6.559,
+      "supplyApy": 6.553,
       "borrowApy": 4.095
     },
     "suiETH": {
@@ -99,8 +99,8 @@
       "borrowApy": 0.974
     },
     "USDC": {
-      "supplyApy": 4.479,
-      "borrowApy": 3.746
+      "supplyApy": 4.478,
+      "borrowApy": 3.75
     },
     "AUSD": {
       "supplyApy": 0.467,
