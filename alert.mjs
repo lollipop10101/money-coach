@@ -18,7 +18,7 @@ import { calcLiqBuffer, getHFTier, getPortfolioAction, checkStrategyRisk, getWal
 import { rankStrategies, getCoachRecommendation } from './engines/score-engine.mjs';
 import { recordRates, get7dAvg } from './db.js';
 import { checkExitConditions } from './alert-exits.js';
-import { analysePortfolio } from './engines/portfolio-engine.mjs';
+import { analysePortfolio, scoreStrategy } from './engines/portfolio-engine.mjs';
 
 const API = "https://open-api.naviprotocol.io/api/navi/pools?env=prod&sdk=1.4.3&market=main";
 const LOG_FILE = "logs/alerts.log";
@@ -117,9 +117,9 @@ function formatConfidence(confidence) {
 function actionLabel(score, riskLevel) {
   if (riskLevel === 'HIGH') return { label: 'AVOID', emoji: '🔴' };
   if (score >= 80 && riskLevel === 'LOW') return { label: 'DEPLOY', emoji: '🟢' };
-  if (score >= 65 && riskLevel === 'MEDIUM') return { label: 'MONITOR', emoji: '🟡' };
+  if (score >= 60 && riskLevel === 'MEDIUM') return { label: 'MONITOR', emoji: '🟡' };
   if (riskLevel === 'MEDIUM') return { label: 'MONITOR', emoji: '🟡' };
-  if (score < 65) return { label: 'WAIT', emoji: '⏸️' };
+  if (score < 60) return { label: 'WAIT', emoji: '⏸️' };
   return { label: 'WAIT', emoji: '⏸️' };
 }
 
@@ -488,12 +488,172 @@ async function buildCoachAlert(pools) {
   return lines.join('\n');
 }
 
+// ─── Build compact Telegram alert ────────────────────────────────────────────
+async function buildCompactCoachAlert(pools) {
+  // ── Regime prediction ──────────────────────────────────────────────────
+  let regime = 'SIDEWAYS';
+  let regimeConfidence = 50;
+  try {
+    const pred = await getMarketPrediction();
+    regime = pred.prediction;
+    regimeConfidence = pred.confidence;
+  } catch (e) {}
+
+  // ── Market data ────────────────────────────────────────────────────────────
+  const navxPriceData = await getNAVXPrice().catch(() => ({ price: null, change24h: null }));
+  const depegData = await getLSTDepegStatus().catch(() => ({ ratio: 1, status: 'unknown', premium_bps: 0 }));
+  const depegBps = depegData?.premium_bps || 0;
+
+  // ── Regime-aware strategy weights ──────────────────────────────────────────
+  const regimeWeights = {
+    BULL:     { 'USDC→LBTC': 2.0, 'USDC→haSUI': 1.5, 'USDY→USDC': 1.0, 'USDC→USDC': 0.5 },
+    BEAR:     { 'USDY→USDC': 2.0, 'USDC→USDC': 1.5, 'USDC→haSUI': 1.0, 'USDC→LBTC': 0.3 },
+    SIDEWAYS: { 'USDY→USDC': 1.5, 'USDC→USDC': 1.5, 'USDC→haSUI': 1.0, 'USDC→LBTC': 0.8 },
+  };
+  const weights = regimeWeights[regime] || regimeWeights.SIDEWAYS;
+
+  // ── Build strategy objects ────────────────────────────────────────────────
+  const strategyObjs = STRATEGIES.map(strat => {
+    const collPool = pools.find((p) => p.symbol === strat.coll);
+    const debtPool = pools.find((p) => p.symbol === strat.debt);
+    if (!collPool || !debtPool) return null;
+
+    const organicSpread = collPool.organicSupplyApy - debtPool.organicBorrowApy;
+    const incentiveApr  = collPool.incentivizedSupplyApr || 0;
+    const netSpread     = organicSpread + incentiveApr;
+    const effectiveLtv  = collPool.ltv * strat.lev;
+
+    let riskLevel = 'LOW';
+    if (['haSUI', 'vSUI', 'stSUI'].includes(strat.debt) && depegBps > 50) riskLevel = 'HIGH';
+    else if (['LBTC', 'BTC', 'SUI'].includes(strat.debt)) riskLevel = 'HIGH';
+    else if (organicSpread <= 0 && incentiveApr > 0) riskLevel = 'HIGH';
+    else if (strat.name === 'USDY→USDC' && organicSpread > 0) riskLevel = 'MEDIUM';
+    else if (effectiveLtv > 0.75) riskLevel = 'HIGH';
+    else if (effectiveLtv > 0.60) riskLevel = 'MEDIUM';
+
+    const bull30d = parseFloat(calc30d(collPool.supplyApy, debtPool.borrowApy, collPool.ltv, strat.debtAsset ? 0.30 : 0, strat.lev));
+    const bear30d = parseFloat(calc30d(collPool.supplyApy, debtPool.borrowApy, collPool.ltv, strat.debtAsset ? -0.30 : 0, strat.lev));
+    const side30d = parseFloat(calc30d(collPool.supplyApy, debtPool.borrowApy, collPool.ltv, strat.debtAsset ? 0.02 : 0, strat.lev));
+
+    return {
+      name: strat.name,
+      debt: strat.debt,
+      coll: strat.coll,
+      lev: strat.lev,
+      debtAsset: strat.debtAsset || false,
+      organicSpread,
+      incentiveApr,
+      netSpread,
+      bull30d,
+      bear30d,
+      side30d,
+      riskLevel,
+      depegBps,
+      score: 50,
+    };
+  }).filter(Boolean);
+
+  // Score each strategy
+  for (const s of strategyObjs) {
+    const scored = scoreStrategy({
+      spread: s.netSpread,
+      organicSpread: s.organicSpread,
+      incentiveApr: s.incentiveApr,
+      navxChange24h: navxPriceData?.change24h || null,
+      navxAvailable: !!navxPriceData?.price,
+      depegBps: s.depegBps,
+      ltv: s.organicSpread > 0 ? s.organicSpread / (s.organicSpread + s.incentiveApr + 0.001) : 0.5,
+      stabilityScore: 50,
+      debt: s.debt,
+    });
+    s.score = scored.finalScore;
+  }
+
+  // Sort by score descending
+  strategyObjs.sort((a, b) => b.score - a.score);
+
+  // ── Build compact output ──────────────────────────────────────────────────
+  const lines = [];
+  const conf = formatConfidence(regimeConfidence);
+
+  lines.push('🧠 NAVI Money Coach');
+  lines.push(`Market: ${regime} | Confidence: ${conf}`);
+  lines.push('');
+
+  // Best action
+  const best = strategyObjs[0];
+  const bestAction = actionLabel(best.score, best.riskLevel);
+  const side30d = parseFloat(calc30d(
+    pools.find(p => p.symbol === best.coll)?.supplyApy || 0,
+    pools.find(p => p.symbol === best.debt)?.borrowApy || 0,
+    pools.find(p => p.symbol === best.coll)?.ltv || 0,
+    best.debtAsset ? 0.02 : 0,
+    best.lev
+  ));
+
+  lines.push(`🏆 Best: ${bestAction.emoji} ${bestAction.label} ${best.name}`);
+  lines.push(`Score ${best.score} | Risk ${best.riskLevel} | 30D ${formatPct(side30d)}`);
+  lines.push('');
+
+  // Avoided strategies with risk source
+  const avoided = strategyObjs.filter(s => s.riskLevel === 'HIGH' || (s.score < 80 && s !== best));
+  if (avoided.length > 0) {
+    lines.push('Avoid:');
+    for (const s of avoided) {
+      const riskSrc = {
+        'USDC→USDC': 'incentive-only',
+        'USDC→LBTC': 'directional debt',
+        'USDC→haSUI': 'haSUI premium',
+      }[s.name] || 'risk threshold';
+      const detail = s.debt === 'haSUI' && depegBps > 0 ? ` +${(depegBps / 100).toFixed(2)}%` : '';
+      lines.push(`🔴 ${s.name} — ${riskSrc}${detail}`);
+    }
+    lines.push('');
+  }
+
+  // Risk data
+  if (depegData?.ratio) {
+    lines.push(`Risk:`);
+    lines.push(`haSUI/SUI ${depegData.ratio.toFixed(4)} premium`);
+  }
+  if (navxPriceData?.price) {
+    const navxChg = navxPriceData.change24h != null ? `${navxPriceData.change24h > 0 ? '+' : ''}${navxPriceData.change24h.toFixed(1)}%` : 'n/a';
+    lines.push(`NAVX $${navxPriceData.price.toFixed(4)} (${navxChg})`);
+  }
+  lines.push('');
+
+  // Why not deploy / trigger (when best score < 80)
+  if (best.score < 80) {
+    lines.push('Why not deploy:');
+    lines.push(`• Score ${best.score} — below 80 threshold`);
+    lines.push('• Yield partly incentive-driven');
+    lines.push('');
+    lines.push('Deploy trigger:');
+    lines.push('• Score > 80');
+    lines.push('• NAVX stable (not dropping)');
+    lines.push('• haSUI premium < 1%');
+    lines.push('• Confidence MED/HIGH');
+    lines.push('');
+  }
+
+  // Action recommendation
+  const actionText = best.score >= 80
+    ? 'ready to deploy.'
+    : best.score >= 60 && best.riskLevel === 'MEDIUM'
+    ? 'wait for better confirmation.'
+    : 'not recommended right now.';
+  lines.push(`Action: ${actionText}`);
+
+  return lines.join('\n');
+}
+
 // ─── Main scan (hourly) ─────────────────────────────────────────────────────
 async function hourlyScan(pools) {
-  const msg = await buildCoachAlert(pools);
-  const sent = await sendAlert(msg);
-  if (sent) log("Alert sent", "ALERT");
-  console.log(msg.replace(/[*_`]/g, ''));
+  const compactMsg = await buildCompactCoachAlert(pools);
+  const fullMsg = await buildCoachAlert(pools);
+  const sent = await sendAlert(compactMsg);
+  if (sent) log("Alert sent (compact)", "ALERT");
+  console.log(fullMsg.replace(/[*_`~]/g, ''));
 }
 
 // ─── Full scan (every 12 hours) ───────────────────────────────────────────────
