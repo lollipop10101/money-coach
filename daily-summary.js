@@ -6,13 +6,14 @@
  */
 
 import * as navi from './navi.mjs';
+import axios from 'axios';
 import { rankStrategies } from './engines/score-engine.mjs';
 import { getHFTier, getPortfolioAction, getWalletPosition } from './engines/risk-engine.mjs';
-import { getPositionSize } from './engines/position-sizing.mjs';
+import { suggestPositionSize } from './engines/position-sizing.mjs';
 import { checkExitConditions } from './alert-exits.js';
 import { get7dAvg } from './db.js';
 import { getNAVXPrice, getLSTDepegStatus } from './price-service.js';
-import { getStrategies } from './alert.mjs';
+import { getStrategies } from './strategies-registry.mjs';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -27,7 +28,7 @@ function calc24hReturn(currentValueUSD, poolSymbol = 'USDC') {
   const avg = get7dAvg(poolSymbol);
   if (!avg || !avg.avg_supply || avg.avg_supply === 0) return null;
   // Approximation: use organic supply apy as baseline yield rate
-  const dailyYieldRate = avg.avg_supply / 365;
+  const dailyYieldRate = avg.avg_supply / 100 / 365;
   const baselineValue = currentValueUSD / (1 + dailyYieldRate);
   const pnl = currentValueUSD - baselineValue;
   return (pnl / baselineValue) * 100;
@@ -67,7 +68,7 @@ export async function generateDailySummary() {
   const stratPoolMap = new Map(strategies.map(strat => {
     const collPool = poolMap.get(strat.coll);
     const debtPool = poolMap.get(strat.debt);
-    return [strat.name, { ...collPool, debtPool }];
+    return [strat.pool, { ...collPool, debtPool }];
   }));
 
   // ── Market data for scoring ──────────────────────────────────────────────
@@ -84,22 +85,19 @@ export async function generateDailySummary() {
   const ranked = await rankStrategies(strategies, stratPoolMap, marketData);
   const best = ranked[0] ?? null;
 
-  // ── Risk alerts — check top 3 strategies ──────────────────────────────────
-  const alerts = [];
-  for (const s of ranked.slice(0, 3)) {
-    const pool = poolMap.get(s.coll);
-    if (!pool) continue;
-    const exits = await checkExitConditions({
-      symbol: s.coll,
-      netSpread: pool.netSpread ?? (pool.supplyApy - pool.borrowApy),
-      borrowApy: pool.borrowApy,
-    });
-    for (const e of exits) {
-      if (e.severity === 'HIGH') {
-        alerts.push(`⚠️ ${e.type}: ${e.message}`);
-      }
-    }
-  }
+  // ── Risk alerts — check top 3 strategies in parallel ──────────────────────────────────
+  const exitResults = await Promise.all(
+    ranked.slice(0, 3).map(async (s) => {
+      const pool = poolMap.get(s.coll);
+      if (!pool) return [];
+      return checkExitConditions({
+        symbol: s.coll,
+        netSpread: pool.netSpread ?? (pool.supplyApy - pool.borrowApy),
+        borrowApy: pool.borrowApy,
+      });
+    })
+  );
+  const alerts = exitResults.flat().filter(e => e.severity === 'HIGH').map(e => `⚠️ ${e.type}: ${e.message}`);
 
   // ── Action recommendation ────────────────────────────────────────────────
   let action = 'HOLD';
@@ -111,11 +109,8 @@ export async function generateDailySummary() {
   } else if (best) {
     const pool = poolMap.get(best.coll);
     if (pool) {
-      const sizing = getPositionSize(best.name, pool, wallet);
-      if (sizing.riskTier === 'SAFE') {
-        action = 'DEPLOY';
-        reason = `${best.name} is a low-risk opportunity. Spread: ${best.spread ?? best.netSpread ?? 'n/a'}%, Score: ${best.score}/100`;
-      }
+      action = 'DEPLOY';
+      reason = `${best.pool || best.label || best.pair} is a top opportunity. Spread: ${best.spread ?? best.netSpread ?? 'n/a'}%, Score: ${best.score}/100`;
     }
   } else if (wallet && hf !== null) {
     const action2 = getPortfolioAction(hf, wallet.overview?.totalBorrowValue / (wallet.overview?.totalSupplyValue || 1));
@@ -138,7 +133,7 @@ export async function generateDailySummary() {
   let bestLine;
   if (best) {
     const spreadStr = best.spread ?? best.netSpread ?? 'n/a';
-    bestLine = `Best opportunity: ${best.name} | Score: ${best.score}/100 | Spread: ${spreadStr}%`;
+    bestLine = `Best opportunity: ${best.pool || best.label || best.pair} | Score: ${best.score}/100 | Spread: ${spreadStr}%`;
   } else {
     bestLine = 'Best opportunity: N/A';
   }
@@ -168,10 +163,31 @@ export async function generateDailySummary() {
   return lines.join('\n');
 }
 
+// ── Telegram send helper ───────────────────────────────────────────────────
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+async function sendTelegramReport(text) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+    console.error('[Telegram] Not configured — skipping send');
+    return false;
+  }
+  try {
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    await axios.post(url, { chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'Markdown' }, { timeout: 10000 });
+    console.log('[Telegram] Report sent ✅');
+    return true;
+  } catch (e) {
+    console.error('[Telegram] Send failed:', e.message);
+    return false;
+  }
+}
+
 // ── CLI run ──────────────────────────────────────────────────────────────────
 if (import.meta.url === `file://${process.argv[1]}`) {
-  generateDailySummary().then(report => {
+  generateDailySummary().then(async report => {
     console.log(report);
+    await sendTelegramReport(report);
     const logsDir = path.join(__dirname, 'logs');
     fs.mkdirSync(logsDir, { recursive: true });
     const filePath = path.join(logsDir, `summary_${new Date().toISOString().split('T')[0]}.txt`);

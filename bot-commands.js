@@ -15,7 +15,7 @@ import fs from 'fs';
 import { getWalletPosition, getHFTier, getPortfolioAction, checkStrategyRisk } from './engines/risk-engine.mjs';
 import { rankStrategies, getCoachRecommendation } from './engines/score-engine.mjs';
 import { getNAVXPrice, getLSTDepegStatus } from './price-service.js';
-import { getStrategies } from './alert.mjs';
+import { getStrategies } from './strategies-registry.mjs';
 import { generateDailySummary } from './daily-summary.js';
 import * as navi from './navi.mjs';
 
@@ -38,13 +38,15 @@ async function cmdBest(ctx) {
     const pools = await navi.getPoolData();
     const poolMap = new Map(pools.map(p => [p.symbol, p]));
     const strategies = getStrategies().map(s => {
-      const coll = poolMap.get(s.coll);
-      const debt = poolMap.get(s.debt);
+      const [collStr, debtStr] = s.pair.split('/');
+      const coll = poolMap.get(collStr);
+      const debt = poolMap.get(debtStr);
       if (!coll || !debt) return null;
       const spread = coll.supplyApy - debt.borrowApy;
       const grossSpread = (spread * 100).toFixed(2);
-      const net30dYield = ((spread * s.lev * 30) / 365 * 100).toFixed(1);
-      return { ...s, spread: grossSpread, net30dYield };
+      const lev = s.lev ?? 1;
+      const net30dYield = ((spread * lev * 30) / 365 * 100).toFixed(1);
+      return { ...s, coll, debt, spread: grossSpread, net30dYield, lev };
     }).filter(Boolean);
 
     const ranked = await rankStrategies(strategies, poolMap, {});
@@ -52,16 +54,16 @@ async function cmdBest(ctx) {
 
     let reply = '🟢 TOP OPPORTUNITIES — Money Coach v2\n\n';
     for (let i = 0; i < top.length; i++) {
-      const s = top[i];
+      const lev = s.lev ?? 1;
       const riskTier = checkStrategyRisk(
         poolMap.get(s.coll)?.ltv || 0,
-        s.debtPrice || 0, 1, s.lev
+        s.debtPrice || 0, 1, lev
       );
       const riskLabel = riskTier.tier === 'SAFE' ? 'Low' : riskTier.tier === 'MODERATE' ? 'Moderate' : 'High';
       const sizeLabel = riskTier.tier === 'SAFE' ? '20-25%'
         : riskTier.tier === 'MODERATE' ? '10-15%' : '0-5%';
       const incentivePct = (poolMap.get(s.coll)?.incentivizedSupplyApr || 0) > 0 ? '✅' : '⚠️';
-      reply += `${i + 1}. ${s.coll}→${s.debt} (${s.lev}x) | Score: ${s.score}/100\n`;
+      reply += `${i + 1}. ${s.coll}→${s.debt} (${lev}x) | Score: ${s.score}/100\n`;
       reply += `   Net Spread: +${s.spread}% | 30D est: +${s.net30dYield}%\n`;
       reply += `   Risk: ${riskLabel} | Size: deploy ${sizeLabel} of capital\n`;
       reply += `   ${incentivePct} Incentives ${(poolMap.get(s.coll)?.incentivizedSupplyApr || 0) > 0 ? 'stable' : 'compressed'}\n\n`;
@@ -122,11 +124,14 @@ async function cmdSimulate(ctx, args) {
   const [coll, debt, levStr] = args;
   const lev = parseInt(levStr || '1', 10);
   const strategies = getStrategies();
-  const strat = strategies.find(s =>
-    s.coll.toLowerCase() === coll.toLowerCase() &&
-    s.debt.toLowerCase() === debt.toLowerCase() &&
-    s.lev === lev
-  );
+  const strat = strategies.find(s => {
+    const [stratColl, stratDebt] = s.pair.split('/');
+    return (
+      stratColl.toLowerCase() === coll.toLowerCase() &&
+      stratDebt.toLowerCase() === debt.toLowerCase() &&
+      (s.lev ?? 1) === lev
+    );
+  });
   if (!strat) {
     return ctx.reply(`⚠️ Unknown strategy: ${coll}→${debt} @ ${lev}x\nCheck /best for available strategies.`);
   }
@@ -208,11 +213,14 @@ async function cmdDeploy(ctx, args) {
   }
 
   const strategies = getStrategies();
-  const strat = strategies.find(s =>
-    s.coll.toLowerCase() === coll.toLowerCase() &&
-    s.debt.toLowerCase() === debt.toLowerCase() &&
-    s.lev === lev
-  );
+  const strat = strategies.find(s => {
+    const [stratColl, stratDebt] = s.pair.split('/');
+    return (
+      stratColl.toLowerCase() === coll.toLowerCase() &&
+      stratDebt.toLowerCase() === debt.toLowerCase() &&
+      (s.lev ?? 1) === lev
+    );
+  });
   if (!strat) {
     return ctx.reply(`⚠️ Unknown strategy: ${coll}→${debt} @ ${lev}x\nCheck /best for available strategies.`);
   }
@@ -321,21 +329,7 @@ async function cmdAlert(ctx, subCmd) {
     }
 
   } else if (subCmd === 'resume') {
-    // Re-spawn the alert process
-    const { spawn } = await import('child_process');
-    try {
-      const alertPid = spawn('node', ['alert.mjs'], {
-        detached: true,
-        stdio: 'ignore',
-        cwd: process.cwd(),
-      });
-      alertPid.unref();
-      fs.writeFileSync(pidFile, String(alertPid.pid));
-      ctx.reply('▶️ Alert process resumed.');
-    } catch (err) {
-      ctx.reply(`❌ Failed to resume: ${err.message}`);
-    }
-
+    ctx.reply('⚠️ Resume unavailable: alert.mjs was removed.');
   } else {
     ctx.reply([
       '🔔 Alert controls:',

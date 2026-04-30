@@ -46,7 +46,7 @@ export async function computeScore(strategy, poolData, marketData) {
   const warnings = [];
 
   // 1. Net 30D yield (base score)
-  const net30d = parseFloat(strategy.net30dYield || 0);
+  const net30d = parseFloat(strategy.net30dYield ?? 0);
   breakdown.net_30d_yield = net30d;
 
   // 2. Liquidation risk penalty
@@ -121,7 +121,7 @@ export async function computeScore(strategy, poolData, marketData) {
 export async function rankStrategies(strategies, poolData, marketData) {
   const scored = await Promise.all(
     strategies.map(async (s) => {
-      const result = await computeScore(s, poolData?.get(s.name) || {}, marketData);
+      const result = await computeScore(s, poolData?.get(s.pool) || {}, marketData);
       return { ...s, score: result.score, scoreDetails: result };
     })
   );
@@ -139,12 +139,14 @@ export async function getCoachRecommendation(rankedStrategies, position, marketD
   const best = rankedStrategies[0];
   const avoid = rankedStrategies[rankedStrategies.length - 1];
 
-  const bestOutput = `🟢 Best idea: ${best.name}
+  const bestName = best.name || best.pool || best.label;
+  const bestOutput = `🟢 Best idea: ${bestName}
 Risk: ${best.scoreDetails?.warnings?.length ? 'Medium' : 'Low'}
-Expected 30D: ${best.net30dYield || 'N/A'}%
+Expected 30D: ${best.net30dYield ?? 'N/A'}%
 Reason: ${best.reason || 'Top score after risk adjustment'}`;
 
-  const avoidOutput = avoid.score < 0 ? `🔴 Avoid: ${avoid.name}
+  const avoidName = avoid.name || avoid.pool || avoid.label;
+  const avoidOutput = avoid.score < 0 ? `🔴 Avoid: ${avoidName}
 Reason: ${avoid.scoreDetails?.warnings?.join(', ') || 'Negative score after penalties'}` : null;
 
   return { best: bestOutput, avoid: avoidOutput, all: rankedStrategies };

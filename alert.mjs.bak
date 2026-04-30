@@ -237,7 +237,7 @@ export function getStrategies() { return STRATEGIES; }
 
 // ─── Telegram ────────────────────────────────────────────────────────────────
 async function sendAlert(message) {
-  if (!TELEGRAM_CONFIGURED) return false;
+  if (!TELEGRAM_CONFIGURED) { console.error("[Telegram] Not configured"); return false; }
   try {
     await axios.post(
       `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
@@ -669,7 +669,10 @@ async function buildCompactCoachAlert(pools) {
 async function hourlyScan(pools) {
   const compactMsg = await buildCompactCoachAlert(pools);
   const fullMsg = await buildCoachAlert(pools);
+  console.error("[DEBUG] sendAlert called, compactMsg length:", compactMsg?.length);
+  console.error("[DEBUG] TELEGRAM_CONFIGURED:", TELEGRAM_CONFIGURED);
   const sent = await sendAlert(compactMsg);
+  console.error("[DEBUG] sendAlert returned:", sent);
   if (sent) log("Alert sent (compact)", "ALERT");
   console.log(fullMsg.replace(/[*_`~]/g, ''));
 }
@@ -787,6 +790,11 @@ async function boot() {
   console.log(`   Coach Mode: ✅ active\n`);
 
   await main();
+
+  if (process.argv[2] === 'cron') {
+    console.log("Cron mode: one-shot complete, exiting.");
+    process.exit(0);
+  }
 
   // Poll every 1 hour
   setInterval(main, 60 * 60 * 1000);

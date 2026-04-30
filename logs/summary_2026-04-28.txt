@@ -1,0 +1,14 @@
+📊 DAILY COACH SUMMARY — 2026-04-28
+
+Portfolio: Unable to fetch wallet data
+Best opportunity: USDC→LBTC | Score: 138.88/100 | Spread: n/a%
+
+Risk alerts:
+  ⚠️ BORROW_SPIKE: Borrow APY spiked +18.55% vs 7D avg (threshold: 2%)
+  ⚠️ BORROW_SPIKE: Borrow APY spiked +18.55% vs 7D avg (threshold: 2%)
+  ⚠️ BORROW_SPIKE: Borrow APY spiked +18.55% vs 7D avg (threshold: 2%)
+
+Action today: REDUCE
+  ⚠️ BORROW_SPIKE: Borrow APY spiked +18.55% vs 7D avg (threshold: 2%)
+
+Next review: tomorrow 09:00
